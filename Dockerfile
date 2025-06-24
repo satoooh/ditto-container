@@ -1,0 +1,76 @@
+# Use NVIDIA CUDA base image with Ubuntu
+FROM nvidia/cuda:11.8-devel-ubuntu22.04
+
+# Set environment variables
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+ENV CUDA_HOME=/usr/local/cuda
+ENV PATH=$CUDA_HOME/bin:$PATH
+ENV LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    python3.10 \
+    python3.10-dev \
+    python3-pip \
+    python3.10-venv \
+    git \
+    wget \
+    curl \
+    build-essential \
+    cmake \
+    pkg-config \
+    libssl-dev \
+    libffi-dev \
+    libxml2-dev \
+    libxslt1-dev \
+    libjpeg-dev \
+    libpng-dev \
+    libtiff-dev \
+    libavcodec-dev \
+    libavformat-dev \
+    libswscale-dev \
+    libv4l-dev \
+    libxvidcore-dev \
+    libx264-dev \
+    libgtk-3-dev \
+    libatlas-base-dev \
+    gfortran \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set python3.10 as default python
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.10 1
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.10 1
+
+# Upgrade pip
+RUN python -m pip install --upgrade pip
+
+# Install PyTorch with CUDA support first
+RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+
+# Install TensorRT and other dependencies
+RUN pip install \
+    tensorrt==8.6.1 \
+    librosa \
+    tqdm \
+    filetype \
+    imageio \
+    opencv-python-headless \
+    scikit-image \
+    cython \
+    cuda-python \
+    imageio-ffmpeg \
+    colored \
+    polygraphy \
+    numpy==2.0.1
+
+# Create working directory
+WORKDIR /app
+
+# Create a non-root user
+RUN useradd -m -u 1000 user && chown -R user:user /app
+USER user
+
+# Set the default command
+CMD ["/bin/bash"] 
