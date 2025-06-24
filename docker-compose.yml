@@ -12,6 +12,8 @@ services:
       - ./checkpoints:/app/checkpoints
       - ./output:/app/output
     working_dir: /app
+    ports:
+      - "8000:8000"
     stdin_open: true
     tty: true
     deploy:

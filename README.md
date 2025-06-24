@@ -41,6 +41,7 @@ This repository contains a Docker setup for the [ditto-talkinghead](https://gith
      -v $(pwd)/checkpoints:/app/checkpoints \
      -v $(pwd)/data:/app/data \
      -v $(pwd)/output:/app/output \
+     -p 8000:8000 \
      --name ditto-container \
      ditto-talkinghead
    ```
@@ -124,7 +125,10 @@ cd /app/src
 python streaming_service.py "/app/checkpoints/ditto_cfg/v0.4_hubert_cfg_trt.pkl" "/app/checkpoints/ditto_trt_Ampere_Plus"
 
 # Open browser: http://localhost:8000
+# Built-in web interface - no separate client needed!
 ```
+
+⚠️ **Note:** Make sure to put a source image (avatar photo) at `/app/data/source_image.png` or update the path in the web interface JavaScript.
 
 ### 📺 RTMP Service (YouTube/Twitch Live)
 ```bash
