@@ -11,7 +11,25 @@ This repository contains a Docker setup for the [ditto-talkinghead](https://gith
 
 ## Quick Start
 
-### Using Docker Compose (Recommended)
+### Remote Deployment (Recommended)
+
+For deploying on another server, use the setup script:
+
+```bash
+# Clone with submodules
+git clone --recursive https://github.com/your-username/ditto-container.git
+cd ditto-container
+
+# Run setup script (handles submodules + Docker build + run)
+./setup.sh
+
+# Or step by step:
+./setup.sh setup  # Setup submodules
+./setup.sh build  # Build Docker image  
+./setup.sh run    # Run container
+```
+
+### Using Docker Compose (Local Development)
 
 1. **Build and run the container:**
    ```bash
@@ -164,6 +182,42 @@ cd ..
 git add src
 git commit -m "Update submodule"
 git push
+```
+
+## 🚀 Remote Deployment & Submodules
+
+### For Remote Servers:
+
+1. **Clone with submodules:**
+```bash
+git clone --recursive https://github.com/your-username/ditto-container.git
+```
+
+2. **Use the setup script:**
+```bash
+cd ditto-container
+./setup.sh  # Handles everything automatically
+```
+
+### Submodule Troubleshooting:
+
+**If src/ directory is empty after cloning:**
+```bash
+git submodule update --init --recursive
+```
+
+**If submodule is out of date:**
+```bash
+git submodule update --remote --recursive
+```
+
+**To update submodule to latest commit:**
+```bash
+cd src
+git pull origin main
+cd ..
+git add src
+git commit -m "Update submodule to latest"
 ```
 
 ## GPU Compatibility
