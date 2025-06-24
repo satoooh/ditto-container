@@ -57,6 +57,9 @@ tmp/
 *.jpg
 *.jpeg
 
+# Keep src directory for building into container
+!src/
+
 # Large files
 *.engine
 *.onnx

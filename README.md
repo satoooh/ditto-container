@@ -30,7 +30,7 @@ This repository contains a Docker setup for the [ditto-talkinghead](https://gith
 
 ### Using Docker directly
 
-1. **Build the image:**
+1. **Build the image (includes source code):**
    ```bash
    docker build -t ditto-talkinghead .
    ```
@@ -38,7 +38,6 @@ This repository contains a Docker setup for the [ditto-talkinghead](https://gith
 2. **Run the container:**
    ```bash
    docker run -it --gpus all \
-     -v $(pwd)/src:/app/src \
      -v $(pwd)/checkpoints:/app/checkpoints \
      -v $(pwd)/data:/app/data \
      -v $(pwd)/output:/app/output \
@@ -46,13 +45,17 @@ This repository contains a Docker setup for the [ditto-talkinghead](https://gith
      ditto-talkinghead
    ```
 
+   Note: When using Docker directly, the source code from the `src/` submodule is built into the container at `/app/src/`.
+
 ## Container Features
 
 - **Base Image:** NVIDIA CUDA 11.8 with Ubuntu 22.04 + manually installed cuDNN8
 - **Python:** 3.10
 - **GPU Support:** Full CUDA and TensorRT support
 - **Pre-installed Tools:** git-lfs, vim
-- **Local Development:** Source code mounted from local `./src` directory
+- **Source Code:** 
+  - Docker Compose: Mounted from local `./src` directory (development mode)
+  - Docker Direct: Built into container at `/app/src/` (deployment mode)
 - **Pre-installed Dependencies:**
   - PyTorch with CUDA support
   - TensorRT 8.6.1
@@ -62,18 +65,29 @@ This repository contains a Docker setup for the [ditto-talkinghead](https://gith
 
 ## Directory Structure
 
-The container expects the following directory structure for volume mounts:
-
+### For Docker Compose (Development Mode)
+Volume mounts for live development:
 ```
 ./
-├── src/                 # Git submodule: ditto-talkinghead source code
-├── checkpoints/          # Model checkpoints (to be downloaded)
-├── data/                # Input data (images, audio files)
-├── output/              # Generated outputs
+├── src/                 # Git submodule: mounted to /app/src in container
+├── checkpoints/          # Model checkpoints: mounted to /app/checkpoints
+├── data/                # Input data: mounted to /app/data
+├── output/              # Generated outputs: mounted to /app/output
 └── docker files...
 ```
 
-The source code is managed as a git submodule from https://github.com/fciannella/ditto-talkinghead and mounted into the container at `/app/src`.
+### For Direct Docker (Deployment Mode)
+Only external data needs to be mounted:
+```
+./
+├── src/                 # Git submodule: built into container at /app/src
+├── checkpoints/          # Model checkpoints: mounted to /app/checkpoints  
+├── data/                # Input data: mounted to /app/data
+├── output/              # Generated outputs: mounted to /app/output
+└── docker files...
+```
+
+The source code is managed as a git submodule from https://github.com/fciannella/ditto-talkinghead.
 
 ## Setting Up the Project
 
@@ -97,7 +111,34 @@ After running the container, you'll need to:
      --output_path "/app/output/result.mp4"
    ```
 
-The source code from your fork is available in `/app/src` and any changes you make locally will be reflected in the container.
+   The source code from your fork is available in `/app/src` and any changes you make locally will be reflected in the container.
+
+## 🎥 Real-time Streaming Services
+
+In addition to batch processing, this container includes **real-time streaming services** for live talking head generation:
+
+### 🌐 WebSocket Service
+```bash
+# Inside container
+cd /app/src
+python streaming_service.py "/app/checkpoints/ditto_cfg/v0.4_hubert_cfg_trt.pkl" "/app/checkpoints/ditto_trt_Ampere_Plus"
+
+# Open browser: http://localhost:8000
+```
+
+### 📺 RTMP Service (YouTube/Twitch Live)
+```bash
+# Inside container  
+cd /app/src
+python rtmp_streaming_service.py "/app/checkpoints/ditto_cfg/v0.4_hubert_cfg_trt.pkl" "/app/checkpoints/ditto_trt_Ampere_Plus"
+
+# Start streaming via API
+curl -X POST "http://localhost:8000/start_stream/my_stream" \
+  -H "Content-Type: application/json" \
+  -d '{"source_path": "/app/data/avatar.png", "rtmp_url": "rtmp://your_stream_url"}'
+```
+
+**See [STREAMING_GUIDE.md](src/STREAMING_GUIDE.md) for complete documentation.**
 
 ## Working with the Git Submodule
 

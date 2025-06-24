@@ -39,6 +39,8 @@ RUN apt-get update && apt-get install -y \
     libatlas-base-dev \
     gfortran \
     ffmpeg \
+    portaudio19-dev \
+    libasound2-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Install cuDNN
@@ -71,13 +73,21 @@ RUN pip install \
     imageio-ffmpeg \
     colored \
     polygraphy \
-    numpy==2.0.1
+    numpy==2.0.1 \
+    fastapi \
+    uvicorn[standard] \
+    websockets \
+    python-multipart \
+    pyaudio
 
 # Create working directory
 WORKDIR /app
 
 # Install git-lfs globally
 RUN git lfs install
+
+# Copy the source code (submodule) into the container
+COPY src/ /app/src/
 
 # Create a non-root user
 RUN useradd -m -u 1000 user && chown -R user:user /app
