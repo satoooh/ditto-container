@@ -142,11 +142,16 @@ In addition to batch processing, this container includes **real-time streaming s
 cd /app/src
 python streaming_service.py "/app/checkpoints/ditto_cfg/v0.4_hubert_cfg_trt.pkl" "/app/checkpoints/ditto_trt_Ampere_Plus"
 
-# Open browser: http://localhost:8000
+# Open browser with your server's IP/hostname:
+# http://YOUR_SERVER_IP:8000  (for remote server)
+# http://localhost:8000       (for local development)
 # Built-in web interface - no separate client needed!
 ```
 
-⚠️ **Note:** Make sure to put a source image (avatar photo) at `/app/data/source_image.png` or update the path in the web interface JavaScript.
+⚠️ **Notes:** 
+- Make sure to put a source image (avatar photo) at `/app/data/source_image.png` 
+- For remote servers, replace `YOUR_SERVER_IP` with your actual server IP or hostname
+- The WebSocket URL is automatically detected from the browser location
 
 ### 📺 RTMP Service (YouTube/Twitch Live)
 ```bash
