@@ -48,7 +48,7 @@ This repository contains a Docker setup for the [ditto-talkinghead](https://gith
 
 ## Container Features
 
-- **Base Image:** NVIDIA CUDA 11.8 with Ubuntu 22.04
+- **Base Image:** NVIDIA CUDA 11.8 with Ubuntu 20.04
 - **Python:** 3.10
 - **GPU Support:** Full CUDA and TensorRT support
 - **Pre-installed Dependencies:**
