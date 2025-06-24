@@ -39,6 +39,12 @@ RUN apt-get update && apt-get install -y \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
+# Install cuDNN
+RUN apt-get update && apt-get install -y \
+    libcudnn8=8.9.7.29-1+cuda11.8 \
+    libcudnn8-dev=8.9.7.29-1+cuda11.8 \
+    && rm -rf /var/lib/apt/lists/*
+
 # Set python3.10 as default python
 RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.10 1
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.10 1

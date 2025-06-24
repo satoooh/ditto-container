@@ -48,7 +48,7 @@ This repository contains a Docker setup for the [ditto-talkinghead](https://gith
 
 ## Container Features
 
-- **Base Image:** NVIDIA CUDA 11.8 with Ubuntu 20.04
+- **Base Image:** NVIDIA CUDA 11.8 with Ubuntu 22.04 + manually installed cuDNN8
 - **Python:** 3.10
 - **GPU Support:** Full CUDA and TensorRT support
 - **Pre-installed Dependencies:**
@@ -129,6 +129,41 @@ sudo chown -R 1000:1000 ./checkpoints ./data ./output ./src
 ### Memory Issues
 This model requires significant GPU memory. Ensure your GPU has enough VRAM (recommended: 8GB+).
 
+### cuDNN Library Issues
+If you get errors about missing `libcudnn.so.8`, this should be resolved as the Dockerfile installs cuDNN8 manually via apt packages (`libcudnn8` and `libcudnn8-dev`).
+
+
+## Run on OCI
+
+## Push the container to gitlab
+
+```
+docker build -t gitlab-master.nvidia.com/fciannella/ditto-container/ditto-container:0.0.1 -t gitlab-master.nvidia.com/fciannella/ditto-container/ditto-container:latest .
+docker push gitlab-master.nvidia.com/fciannella/ditto-container/ditto-container:0.0.1
+docker push gitlab-master.nvidia.com/fciannella/ditto-container/ditto-container:latest
+```
+
+## Run the container on OCI
+
+```
+srun -A llmservice_nemo_mlops -p interactive_singlenode -G 4 --time 04:00:00 --container-mounts /lustre/fsw/portfolios/llmservice/users/fciannella/cache:/root/.cache,/lustre/fsw/portfolios/llmservice/users/fciannella/src:/root/src --container-image gitlab-master.nvidia.com/fciannella/ditto-container/ditto-container:latest --pty bash
+```
+
+
+## Test the inference
+
+```
+python inference.py \
+    --data_root "./checkpoints/ditto_trt_Ampere_Plus" \
+    --cfg_pkl "./checkpoints/ditto_cfg/v0.4_hubert_cfg_trt.pkl" \
+    --audio_path "./tmpcc1gbdw3.wav" \
+    --source_path "./chris_avatar.png" \
+    --output_path "./result.mp4" 
+```
+
+
 ## License
 
 This Docker setup is provided under the same Apache-2.0 license as the original ditto-talkinghead project. 
+
+
