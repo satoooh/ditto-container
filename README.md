@@ -38,10 +38,10 @@ This repository contains a Docker setup for the [ditto-talkinghead](https://gith
 2. **Run the container:**
    ```bash
    docker run -it --gpus all \
+     -v $(pwd)/src:/app/src \
      -v $(pwd)/checkpoints:/app/checkpoints \
      -v $(pwd)/data:/app/data \
      -v $(pwd)/output:/app/output \
-     -v $(pwd)/src:/app/src \
      --name ditto-container \
      ditto-talkinghead
    ```
@@ -51,6 +51,8 @@ This repository contains a Docker setup for the [ditto-talkinghead](https://gith
 - **Base Image:** NVIDIA CUDA 11.8 with Ubuntu 22.04 + manually installed cuDNN8
 - **Python:** 3.10
 - **GPU Support:** Full CUDA and TensorRT support
+- **Pre-installed Tools:** git-lfs, vim
+- **Local Development:** Source code mounted from local `./src` directory
 - **Pre-installed Dependencies:**
   - PyTorch with CUDA support
   - TensorRT 8.6.1
@@ -64,31 +66,27 @@ The container expects the following directory structure for volume mounts:
 
 ```
 ./
+├── src/                 # Git submodule: ditto-talkinghead source code
 ├── checkpoints/          # Model checkpoints (to be downloaded)
 ├── data/                # Input data (images, audio files)
 ├── output/              # Generated outputs
-├── src/                 # Source code from ditto-talkinghead
 └── docker files...
 ```
+
+The source code is managed as a git submodule from https://github.com/fciannella/ditto-talkinghead and mounted into the container at `/app/src`.
 
 ## Setting Up the Project
 
 After running the container, you'll need to:
 
-1. **Clone the source code inside the container:**
-   ```bash
-   cd /app/src
-   git clone https://github.com/antgroup/ditto-talkinghead .
-   ```
-
-2. **Download the model checkpoints:**
+1. **Download the model checkpoints:**
    ```bash
    cd /app
    git lfs install
    git clone https://huggingface.co/digital-avatar/ditto-talkinghead checkpoints
    ```
 
-3. **Run inference:**
+2. **Run inference:**
    ```bash
    cd /app/src
    python inference.py \
@@ -99,13 +97,37 @@ After running the container, you'll need to:
      --output_path "/app/output/result.mp4"
    ```
 
+The source code from your fork is available in `/app/src` and any changes you make locally will be reflected in the container.
+
+## Working with the Git Submodule
+
+The `src/` directory is a git submodule pointing to your fork. To work with it:
+
+```bash
+# Update the submodule to latest from your fork
+git submodule update --remote src
+
+# Make changes to the code in ./src/
+# Then commit and push from within the src directory
+cd src
+git add .
+git commit -m "Your changes"
+git push origin main
+
+# Update the main repository to point to the new commit
+cd ..
+git add src
+git commit -m "Update submodule"
+git push
+```
+
 ## GPU Compatibility
 
 The pre-built TensorRT models are compatible with `Ampere_Plus` GPUs. If your GPU doesn't support this, you'll need to convert the ONNX models to TensorRT inside the container:
 
 ```bash
 cd /app/src
-python script/cvt_onnx_to_trt.py \
+python scripts/cvt_onnx_to_trt.py \
   --onnx_dir "/app/checkpoints/ditto_onnx" \
   --trt_dir "/app/checkpoints/ditto_trt_custom"
 ```

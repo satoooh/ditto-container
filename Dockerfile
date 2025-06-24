@@ -15,6 +15,8 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     python3.10-venv \
     git \
+    git-lfs \
+    vim \
     wget \
     curl \
     build-essential \
@@ -73,6 +75,9 @@ RUN pip install \
 
 # Create working directory
 WORKDIR /app
+
+# Install git-lfs globally
+RUN git lfs install
 
 # Create a non-root user
 RUN useradd -m -u 1000 user && chown -R user:user /app

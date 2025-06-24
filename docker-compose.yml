@@ -7,10 +7,10 @@ services:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     volumes:
+      - ./src:/app/src
       - ./data:/app/data
       - ./checkpoints:/app/checkpoints
       - ./output:/app/output
-      - ./src:/app/src
     working_dir: /app
     stdin_open: true
     tty: true
