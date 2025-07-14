@@ -140,7 +140,7 @@ In addition to batch processing, this container includes **real-time streaming s
 ```bash
 # Inside container
 cd /app/src
-python streaming_service.py "/app/checkpoints/ditto_cfg/v0.4_hubert_cfg_trt.pkl" "/app/checkpoints/ditto_trt_Ampere_Plus"
+python streaming_service.py "/app/checkpoints/ditto_cfg/v0.4_hubert_cfg_trt_online.pkl" "/app/checkpoints/ditto_trt_Ampere_Plus"
 
 # Open browser with your server's IP/hostname:
 # http://YOUR_SERVER_IP:8000  (for remote server)
@@ -293,3 +293,14 @@ python inference.py \
 This Docker setup is provided under the same Apache-2.0 license as the original ditto-talkinghead project. 
 
 
+
+
+
+export TMPDIR=/root/src/.cache
+export TEMP=/root/src/.cache
+export TMP=/root/src/.cache
+export PYXBLD_DIR=/root/src/.cache/pyxbld
+mkdir -p /root/src/.cache/pyxbld
+
+# Clean up any existing build cache
+rm -rf /root/.pyxbld/
