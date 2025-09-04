@@ -56,11 +56,16 @@ RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.10 1
 # Upgrade pip
 RUN python -m pip install --upgrade pip
 
+# Ensure pip can fall back to PyPI when NVIDIA's index lacks a dependency
+# (e.g., tensorrt_libs -> nvidia-cublas-cu12 is not on https://pypi.nvidia.com)
+ENV PIP_EXTRA_INDEX_URL=https://pypi.org/simple
+
 # Install PyTorch with CUDA support first
 RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 
 # Install TensorRT and other dependencies
-RUN pip install \
+# Note: keep explicit extra index here as well for clarity, though ENV covers sub-installs
+RUN pip install --extra-index-url https://pypi.org/simple \
     tensorrt==8.6.1 \
     librosa \
     tqdm \
@@ -69,7 +74,7 @@ RUN pip install \
     opencv-python-headless \
     scikit-image \
     cython \
-    cuda-python \
+    cuda-python==12.6.* \
     imageio-ffmpeg \
     colored \
     polygraphy \
