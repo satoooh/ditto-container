@@ -9,9 +9,10 @@ from typing import Dict, Any
 import base64
 import cv2
 import numpy as np
+import struct
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File
+from fastapi.responses import HTMLResponse, JSONResponse
 import uvicorn
 
 from stream_pipeline_online import StreamSDK
@@ -33,6 +34,34 @@ class StreamingServer:
         # Initialize FastAPI app
         self.app = FastAPI(title="Ditto Streaming Server", version="1.0.0")
         self.setup_routes()
+        # Startup hook for pre-warm
+        self.app.add_event_handler("startup", self.on_startup)
+
+    async def on_startup(self):
+        """Pre-warm heavy libs (TRT/CUDA) and, if可能, run lightweight setup once."""
+        async def _prewarm_async():
+            loop = asyncio.get_event_loop()
+            def _task():
+                try:
+                    logger.info("🔧 Prewarming StreamSDK (loading models/libs)...")
+                    SDK = StreamSDK(self.cfg_pkl, self.data_root)
+                    # Optional: run a light setup with example image if present
+                    img = "/app/src/example/image.png"
+                    if os.path.exists(img):
+                        try:
+                            SDK.setup(img, "/tmp/_prewarm.mp4")
+                            logger.info("✅ Prewarm setup completed")
+                        except Exception as e:
+                            logger.warning(f"Prewarm setup skipped: {e}")
+                    else:
+                        logger.info("Prewarm: example image not found, skipped setup phase")
+                except Exception as e:
+                    logger.warning(f"Prewarm failed/skipped: {e}")
+            return await loop.run_in_executor(None, _task)
+        try:
+            await _prewarm_async()
+        except Exception as e:
+            logger.warning(f"Prewarm task error: {e}")
         
     def setup_routes(self):
         @self.app.get("/")
@@ -46,7 +75,175 @@ class StreamingServer:
             <body>
                 <h1>Ditto Streaming Server</h1>
                 <p>Server is running. Use WebSocket client to connect.</p>
-                <p>WebSocket endpoint: ws://localhost:8000/ws/{client_id}</p>
+                <p>Try the browser demo at <a href=\"/demo\">/demo</a>.</p>
+                <p>WebSocket endpoint: ws(s)://YOUR_HOST/ws/{client_id}</p>
+            </body>
+            </html>
+            """)
+        
+        @self.app.post("/upload")
+        async def upload_files(audio: UploadFile | None = File(None), source: UploadFile | None = File(None)):
+            import uuid, pathlib
+            base_dir = pathlib.Path("/app/data/uploads")
+            base_dir.mkdir(parents=True, exist_ok=True)
+            resp = {}
+
+            def save(upload: UploadFile, tag: str):
+                suffix = pathlib.Path(upload.filename or "").suffix.lower() or (".wav" if tag=="audio" else ".png")
+                # very light validation
+                if tag == "audio" and suffix not in [".wav", ".mp3", ".m4a", ".flac", ".ogg"]:
+                    return JSONResponse({"error": f"unsupported audio extension: {suffix}"}, status_code=400)
+                if tag == "source" and suffix not in [".png", ".jpg", ".jpeg", ".webp"]:
+                    return JSONResponse({"error": f"unsupported image extension: {suffix}"}, status_code=400)
+                name = f"{uuid.uuid4().hex}_{tag}{suffix}"
+                dst = base_dir / name
+                with dst.open("wb") as f:
+                    f.write(await upload.read())
+                return str(dst)
+
+            if audio is not None:
+                path = save(audio, "audio")
+                if isinstance(path, JSONResponse):
+                    return path
+                resp["audio_path"] = path
+            if source is not None:
+                path = save(source, "source")
+                if isinstance(path, JSONResponse):
+                    return path
+                resp["source_path"] = path
+            if not resp:
+                return JSONResponse({"error": "no files provided"}, status_code=400)
+            return resp
+
+        @self.app.get("/demo")
+        async def get_demo():
+            return HTMLResponse("""
+            <!DOCTYPE html>
+            <html>
+            <head>
+              <meta charset=\"utf-8\" />
+              <title>Ditto Streaming Demo</title>
+              <style>
+                body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 20px; }
+                .row { margin: 8px 0; }
+                label { display: inline-block; width: 140px; }
+                input { width: 520px; }
+                #preview { max-width: 720px; border: 1px solid #ddd; }
+                #log { height: 160px; width: 720px; overflow: auto; border: 1px solid #ddd; padding: 8px; white-space: pre-wrap; background: #fafafa; }
+                button { margin-right: 8px; }
+              </style>
+            </head>
+            <body>
+              <h2>Ditto Streaming Demo (Browser)</h2>
+              <div class=\"row\"><label>Client ID</label><input id=\"clientId\" value=\"web_demo\"></div>
+              <div class=\"row\"><label>Audio Path (server)</label><input id=\"audioPath\" value=\"/app/src/example/audio.wav\"></div>
+              <div class=\"row\"><label>Source Path (server)</label><input id=\"sourcePath\" value=\"/app/src/example/image.png\"></div>
+              <div class=\"row\"><label>Upload (browser)</label>
+                <input type=\"file\" id=\"upAudio\" accept=\"audio/*\"> 
+                <input type=\"file\" id=\"upSource\" accept=\"image/*\">
+                <button id=\"btnUpload\">Upload</button>
+              </div>
+              <div class=\"row\">
+                <button id=\"btnConnect\">Connect</button>
+                <button id=\"btnStart\" disabled>Start</button>
+                <button id=\"btnStop\" disabled>Stop</button>
+                <button id=\"btnDisconnect\" disabled>Disconnect</button>
+              </div>
+              <div class=\"row\"><img id=\"preview\" alt=\"frame preview\"/></div>
+              <div class=\"row\"><div id=\"log\"></div></div>
+
+              <script>
+              const logEl = document.getElementById('log');
+              const imgEl = document.getElementById('preview');
+              const clientIdEl = document.getElementById('clientId');
+              const audioPathEl = document.getElementById('audioPath');
+              const sourcePathEl = document.getElementById('sourcePath');
+              const btnConnect = document.getElementById('btnConnect');
+              const btnStart = document.getElementById('btnStart');
+              const btnStop = document.getElementById('btnStop');
+              const btnDisconnect = document.getElementById('btnDisconnect');
+              const btnUpload = document.getElementById('btnUpload');
+              const upAudio = document.getElementById('upAudio');
+              const upSource = document.getElementById('upSource');
+              
+              let ws = null;
+              function log(msg){
+                const t = new Date().toLocaleTimeString();
+                logEl.textContent += `[${t}] ${msg}\n`;
+                logEl.scrollTop = logEl.scrollHeight;
+              }
+              function wsUrlFor(clientId){
+                const proto = (location.protocol === 'https:') ? 'wss' : 'ws';
+                return `${proto}://${location.host}/ws/${encodeURIComponent(clientId)}`;
+              }
+              btnUpload.onclick = async () => {
+                try {
+                  const fd = new FormData();
+                  if(upAudio.files[0]) fd.append('audio', upAudio.files[0]);
+                  if(upSource.files[0]) fd.append('source', upSource.files[0]);
+                  if(!fd.has('audio') && !fd.has('source')){ log('No files selected'); return; }
+                  const r = await fetch('/upload', { method: 'POST', body: fd });
+                  const j = await r.json();
+                  if(!r.ok){ log('Upload failed: ' + (j.error||r.status)); return; }
+                  if(j.audio_path){ audioPathEl.value = j.audio_path; }
+                  if(j.source_path){ sourcePathEl.value = j.source_path; }
+                  log('Upload success');
+                } catch (e) { log('Upload error'); console.error(e); }
+              };
+              btnConnect.onclick = () => {
+                const url = wsUrlFor(clientIdEl.value || 'web_demo');
+                ws = new WebSocket(url);
+                ws.binaryType = 'arraybuffer';
+                ws.onopen = () => { log('Connected: ' + url); btnStart.disabled=false; btnDisconnect.disabled=false; btnConnect.disabled=true; };
+                ws.onclose = () => { log('Disconnected'); btnStart.disabled=true; btnStop.disabled=true; btnDisconnect.disabled=true; btnConnect.disabled=false; };
+                ws.onerror = (e) => { log('WebSocket error'); console.error(e); };
+                ws.onmessage = (ev) => {
+                  try{
+                    if (typeof ev.data === 'string') {
+                      const msg = JSON.parse(ev.data);
+                      if(msg.type === 'frame' && msg.frame_data){
+                        imgEl.src = 'data:image/jpeg;base64,' + msg.frame_data; // legacy path
+                      } else if(msg.type === 'streaming_started'){
+                        log('Streaming started');
+                      } else if(msg.type === 'streaming_completed'){
+                        log('Streaming completed');
+                      } else if(msg.type === 'metadata'){
+                        log(`Metadata: duration=${msg.audio_duration?.toFixed?.(2)}s, frames=${msg.expected_frames}`);
+                      } else if(msg.type === 'error'){
+                        log('Server error: ' + msg.message);
+                      }
+                    } else {
+                      // Binary frame: header (uint32 frame_id, double ts, uint32 len) + jpeg bytes
+                      const buf = ev.data; // ArrayBuffer
+                      const dv = new DataView(buf);
+                      const frameId = dv.getUint32(0, false);
+                      const ts = dv.getFloat64(4, false);
+                      const len = dv.getUint32(12, false);
+                      const jpeg = buf.slice(16, 16 + len);
+                      const blob = new Blob([jpeg], {type:'image/jpeg'});
+                      const urlObj = URL.createObjectURL(blob);
+                      imgEl.onload = () => URL.revokeObjectURL(urlObj);
+                      imgEl.src = urlObj;
+                    }
+                  }catch(err){ console.error(err); }
+                };
+              };
+              btnStart.onclick = () => {
+                if(!ws || ws.readyState !== 1){ log('Not connected'); return; }
+                const audio = audioPathEl.value.trim();
+                const source = sourcePathEl.value.trim();
+                const payload = { type: 'start_streaming', audio_path: audio, source_path: source, setup_kwargs: {}, run_kwargs: {}, binary: true };
+                ws.send(JSON.stringify(payload));
+                log('Sent start_streaming');
+                btnStop.disabled=false;
+              };
+              btnStop.onclick = () => {
+                if(!ws || ws.readyState !== 1){ log('Not connected'); return; }
+                ws.send(JSON.stringify({type: 'stop_streaming'}));
+                log('Sent stop_streaming');
+              };
+              btnDisconnect.onclick = () => { if(ws){ ws.close(); } };
+              </script>
             </body>
             </html>
             """)
@@ -123,12 +320,16 @@ class StreamingServer:
         
         logger.info(f"Starting streaming for client {client_id}")
         
+        # Determine frame transport
+        prefer_binary = bool(config.get("binary", False))
+
         # Send streaming started confirmation
         await self.send_message(client_id, {
             "type": "streaming_started",
             "audio_path": audio_path,
             "source_path": source_path,
-            "timestamp": time.time()
+            "timestamp": time.time(),
+            "binary": prefer_binary
         })
         logger.info(f"Sent streaming started confirmation for client {client_id}")
         
@@ -144,7 +345,8 @@ class StreamingServer:
             "streaming_task": None,  # Will be set later
             "frame_sender_task": None,  # Will be set later
             "start_time": time.time(),
-            "frame_count": 0
+            "frame_count": 0,
+            "prefer_binary": prefer_binary
         }
         logger.info(f"Added client {client_id} to active_streams")
         
@@ -237,8 +439,26 @@ class StreamingServer:
                         logger.info(f"💊 Poison pill received for {client_id}, processed all frames")
                         break
                     
-                    logger.info(f"📤 Sending message type '{message.get('type')}' to {client_id}")
-                    await self.send_message(client_id, message)
+                    msg_type = message.get('type')
+                    if msg_type == 'frame' and 'jpeg_data' in message:
+                        prefer_binary = self.active_streams.get(client_id, {}).get('prefer_binary', False)
+                        if prefer_binary:
+                            await self.send_binary_frame(client_id, message)
+                        else:
+                            # Fallback: send legacy JSON with base64
+                            try:
+                                b64 = base64.b64encode(message['jpeg_data']).decode('utf-8')
+                                legacy_msg = {
+                                    'type': 'frame',
+                                    'frame_id': message.get('frame_id'),
+                                    'frame_data': b64,
+                                    'timestamp': message.get('timestamp')
+                                }
+                                await self.send_message(client_id, legacy_msg)
+                            except Exception as e:
+                                logger.error(f"Legacy send failed: {e}")
+                    else:
+                        await self.send_message(client_id, message)
                     frames_sent += 1
                     
                     if frames_sent % 10 == 0:
@@ -262,6 +482,24 @@ class StreamingServer:
             logger.error(f"❌ Worker traceback: {traceback.format_exc()}")
         
         logger.info(f"🏁 EXITING frame_sender_worker for {client_id}, sent {frames_sent} messages")
+
+    async def send_binary_frame(self, client_id: str, message: Dict[str, Any]):
+        """Send a single frame as binary WebSocket message.
+        Format: frame_id(uint32 BE) + timestamp(double BE) + data_len(uint32 BE) + jpeg_bytes
+        """
+        if client_id not in self.active_connections:
+            return
+        try:
+            frame_id = int(message.get('frame_id', 0))
+            ts = float(message.get('timestamp', time.time()))
+            jpeg_bytes = message.get('jpeg_data', b'')
+            if not isinstance(jpeg_bytes, (bytes, bytearray)):
+                jpeg_bytes = bytes(jpeg_bytes)
+            header = struct.pack('!IdI', frame_id, ts, len(jpeg_bytes))
+            await self.active_connections[client_id].send_bytes(header + jpeg_bytes)
+        except Exception as e:
+            logger.error(f"❌ Error sending binary frame to {client_id}: {e}")
+            self.cleanup_client(client_id)
     
     async def run_streaming_pipeline(self, client_id: str, audio_path: str, source_path: str, config: Dict[str, Any]):
         try:
@@ -464,24 +702,22 @@ class WebSocketFrameWriter:
         self.frame_count = 0
         
     def __call__(self, frame_rgb: np.ndarray, fmt: str = "rgb"):
-        logger.info(f"WebSocketFrameWriter called for frame {self.frame_count} (client: {self.client_id})")
-        
-        # Convert frame to base64 for WebSocket transmission
+        # Convert to JPEG bytes for binary WebSocket transmission
         if fmt == "rgb":
             # Convert RGB to BGR for OpenCV
             frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
         else:
             frame_bgr = frame_rgb
             
-        # Encode frame as JPEG
+        # Encode frame as JPEG (keep default quality 80; can be tuned)
         _, buffer = cv2.imencode('.jpg', frame_bgr, [cv2.IMWRITE_JPEG_QUALITY, 80])
-        frame_base64 = base64.b64encode(buffer).decode('utf-8')
+        jpeg_bytes = buffer.tobytes()
         
         # Send frame via WebSocket using queue
         message = {
             "type": "frame",
             "frame_id": self.frame_count,
-            "frame_data": frame_base64,
+            "jpeg_data": jpeg_bytes,
             "timestamp": time.time()
         }
         
