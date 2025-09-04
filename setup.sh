@@ -71,8 +71,16 @@ build_docker() {
 # Function to run the container
 run_container() {
     echo "🏃 Starting container..."
-    
-    if command -v docker-compose &> /dev/null; then
+
+    # Prefer Docker Compose v2 (docker compose), then v1 (docker-compose)
+    if command -v docker &> /dev/null && docker compose version &> /dev/null; then
+        docker compose up -d
+        echo "✅ Container started with docker compose"
+        echo "Access the web interface at: http://localhost:8000"
+        echo ""
+        echo "To enter the container:"
+        echo "docker compose exec ditto-talkinghead bash"
+    elif command -v docker-compose &> /dev/null; then
         docker-compose up -d
         echo "✅ Container started with docker-compose"
         echo "Access the web interface at: http://localhost:8000"
@@ -80,18 +88,38 @@ run_container() {
         echo "To enter the container:"
         echo "docker-compose exec ditto-talkinghead bash"
     else
-        docker run -d --gpus all \
-            -v $(pwd)/checkpoints:/app/checkpoints \
-            -v $(pwd)/data:/app/data \
-            -v $(pwd)/output:/app/output \
+        # Fallback to plain docker run. Ensure the container stays alive by:
+        # - allocating a TTY and keeping STDIN open (-it)
+        # - running a harmless long-running command (sleep infinity)
+        docker run -d -it --gpus all \
+            -v "$(pwd)/checkpoints:/app/checkpoints" \
+            -v "$(pwd)/data:/app/data" \
+            -v "$(pwd)/output:/app/output" \
             -p 8000:8000 \
+            --restart unless-stopped \
             --name ditto-container \
-            ditto-talkinghead
+            ditto-talkinghead bash -lc 'sleep infinity'
         echo "✅ Container started with docker run"
         echo "Access the web interface at: http://localhost:8000"
         echo ""
         echo "To enter the container:"
         echo "docker exec -it ditto-container bash"
+    fi
+
+    # Quick post-run health check (best-effort)
+    if command -v docker &> /dev/null; then
+        if ! docker ps --format '{{.Names}}' | grep -q '^ditto-container$'; then
+            echo "⚠️  Container is not running. Collecting recent logs (if any):"
+            CONTAINER_ID=$(docker ps -a --filter name=ditto-container --format '{{.ID}}' | head -n1 || true)
+            if [ -n "$CONTAINER_ID" ]; then
+                docker logs --tail=200 "$CONTAINER_ID" || true
+                docker inspect "$CONTAINER_ID" --format 'Status={{.State.Status}} ExitCode={{.State.ExitCode}}' || true
+            else
+                echo "No container found by name ditto-container."
+            fi
+            echo "❌ Start appears to have failed. See logs above."
+            exit 1
+        fi
     fi
 }
 
