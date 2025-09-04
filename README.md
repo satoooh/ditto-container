@@ -140,12 +140,29 @@ In addition to batch processing, this container includes **real-time streaming s
 ```bash
 # Inside container
 cd /app/src
-python streaming_service.py "/app/checkpoints/ditto_cfg/v0.4_hubert_cfg_trt_online.pkl" "/app/checkpoints/ditto_trt_Ampere_Plus"
 
-# Open browser with your server's IP/hostname:
-# http://YOUR_SERVER_IP:8000  (for remote server)
-# http://localhost:8000       (for local development)
-# Built-in web interface - no separate client needed!
+# Start the streaming server (WebSocket + FastAPI)
+python streaming_server.py \
+  --host 0.0.0.0 \
+  --port 8000 \
+  --cfg_pkl "/app/checkpoints/ditto_cfg/v0.4_hubert_cfg_trt_online.pkl" \
+  --data_root "/app/checkpoints/ditto_trt_Ampere_Plus"
+
+# Quick test client (runs in the same container, uses example inputs)
+python streaming_client.py \
+  --server ws://localhost:8000 \
+  --client_id test_client \
+  --audio_path /app/src/example/audio.wav \
+  --source_path /app/src/example/image.png \
+  --timeout 60
+
+# Open from your machine (if port 8000 is exposed):
+# http://YOUR_SERVER_IP:8000/demo  (remote server)
+# http://localhost:8000/demo       (local dev)
+
+# The demo page connects via WebSocket to `${location.host}` and can:
+# - Start streaming using server-side paths (defaults: /app/src/example/*)
+# - Upload audio/image from your browser (stored under /app/data/uploads) and then start streaming
 ```
 
 ⚠️ **Notes:** 
