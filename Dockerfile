@@ -91,7 +91,7 @@ WORKDIR /app
 # Install git-lfs globally
 RUN git lfs install
 
-# Copy the source code (submodule) into the container
+# Copy the application source into the container
 COPY src/ /app/src/
 
 # Create a non-root user

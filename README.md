@@ -1,323 +1,168 @@
 # Ditto TalkingHead Docker Container
 
-This repository contains a Docker setup for the [ditto-talkinghead](https://github.com/antgroup/ditto-talkinghead) project, which provides Motion-Space Diffusion for Controllable Realtime Talking Head Synthesis.
+Dockerized environment for the Ditto Talking Head project (Motion‑Space Diffusion for controllable, realtime talking head synthesis).
+
+This repo does not use git submodules. The `src/` directory lives in this repository and is copied into the image (or mounted via Compose) as-is.
 
 ## Prerequisites
-
-- Docker with GPU support
-- NVIDIA Docker runtime
-- NVIDIA GPU with CUDA support
-- Docker Compose (optional but recommended)
+- Docker with GPU support and NVIDIA Container Toolkit
+- NVIDIA GPU with CUDA support (Ampere or newer recommended)
+- Docker Compose v2 (optional but recommended)
 
 ## Quick Start
 
-### Remote Deployment (Recommended)
-
-For deploying on another server, use the setup script:
-
+### 1) Clone
 ```bash
-# Clone with submodules
-git clone --recursive https://github.com/your-username/ditto-container.git
+git clone https://github.com/your-username/ditto-container.git
 cd ditto-container
-
-# Run setup script (handles submodules + Docker build + run)
-./setup.sh
-
-# Or step by step:
-./setup.sh setup  # Setup submodules
-./setup.sh build  # Build Docker image  
-./setup.sh run    # Run container
 ```
 
-### Using Docker Compose (Local Development)
+### 2) Build (choose one)
+- Compose (recommended for development):
+  ```bash
+  docker compose up -d --build
+  # or: docker-compose up -d --build
+  ```
+- Plain Docker:
+  ```bash
+  docker build -t ditto-talkinghead .
+  ```
 
-1. **Build and run the container:**
-   ```bash
-   docker-compose up -d --build
-   ```
-
-2. **Access the container:**
-   ```bash
-   docker-compose exec ditto-talkinghead bash
-   ```
-
-3. **Stop the container:**
-   ```bash
-   docker-compose down
-   ```
-
-### Using Docker directly
-
-1. **Build the image (includes source code):**
-   ```bash
-   docker build -t ditto-talkinghead .
-   ```
-
-2. **Run the container:**
-   ```bash
-   docker run -it --gpus all \
-     -v $(pwd)/checkpoints:/app/checkpoints \
-     -v $(pwd)/data:/app/data \
-     -v $(pwd)/output:/app/output \
-     -p 8000:8000 \
-     --name ditto-container \
-     ditto-talkinghead
-   ```
-
-   Note: When using Docker directly, the source code from the `src/` submodule is built into the container at `/app/src/`.
-
-## Container Features
-
-- **Base Image:** NVIDIA CUDA 11.8 with Ubuntu 22.04 + manually installed cuDNN8
-- **Python:** 3.10
-- **GPU Support:** Full CUDA and TensorRT support
-- **Pre-installed Tools:** git-lfs, vim
-- **Source Code:** 
-  - Docker Compose: Mounted from local `./src` directory (development mode)
-  - Docker Direct: Built into container at `/app/src/` (deployment mode)
-- **Pre-installed Dependencies:**
-  - PyTorch with CUDA support
-  - TensorRT 8.6.1
-  - OpenCV
-  - librosa
-  - All other required packages from the original repository
-
-## Directory Structure
-
-### For Docker Compose (Development Mode)
-Volume mounts for live development:
-```
-./
-├── src/                 # Git submodule: mounted to /app/src in container
-├── checkpoints/          # Model checkpoints: mounted to /app/checkpoints
-├── data/                # Input data: mounted to /app/data
-├── output/              # Generated outputs: mounted to /app/output
-└── docker files...
-```
-
-### For Direct Docker (Deployment Mode)
-Only external data needs to be mounted:
-```
-./
-├── src/                 # Git submodule: built into container at /app/src
-├── checkpoints/          # Model checkpoints: mounted to /app/checkpoints  
-├── data/                # Input data: mounted to /app/data
-├── output/              # Generated outputs: mounted to /app/output
-└── docker files...
-```
-
-The source code is managed as a git submodule from https://github.com/fciannella/ditto-talkinghead.
-
-## Setting Up the Project
-
-After running the container, you'll need to:
-
-1. **Download the model checkpoints:**
-   ```bash
-   cd /app
-   git lfs install
-   git clone https://huggingface.co/digital-avatar/ditto-talkinghead checkpoints
-   ```
-
-2. **Run inference:**
-   ```bash
-   cd /app/src
-   python inference.py \
-     --data_root "/app/checkpoints/ditto_trt_Ampere_Plus" \
-     --cfg_pkl "/app/checkpoints/ditto_cfg/v0.4_hubert_cfg_trt.pkl" \
-     --audio_path "/app/data/audio.wav" \
-     --source_path "/app/data/image.png" \
-     --output_path "/app/output/result.mp4"
-   ```
-
-   The source code from your fork is available in `/app/src` and any changes you make locally will be reflected in the container.
-
-## 🎥 Real-time Streaming Services
-
-In addition to batch processing, this container includes **real-time streaming services** for live talking head generation:
-
-### 🌐 WebSocket Service
+### 3) Run (if you built with plain Docker)
 ```bash
-# Inside container
+docker run -d -it --gpus all \
+  -v "$(pwd)/checkpoints:/app/checkpoints" \
+  -v "$(pwd)/data:/app/data" \
+  -v "$(pwd)/output:/app/output" \
+  -p 8000:8000 \
+  --restart unless-stopped \
+  --name ditto-container \
+  ditto-talkinghead bash -lc 'sleep infinity'
+```
+
+### Common Ops
+- Enter container (Compose v2): `docker compose exec ditto-talkinghead bash`
+- Enter container (Compose v1): `docker-compose exec ditto-talkinghead bash`
+- Stop (Compose v2): `docker compose down`
+
+## What’s in the Container
+- Base: NVIDIA CUDA 11.8 (Ubuntu 22.04) + cuDNN 8
+- Python 3.10, PyTorch (cu118), TensorRT 8.6.1
+- Tools: git, git-lfs, ffmpeg, vim
+- App source: `src/` → `/app/src` (copied for Docker build, mounted in Compose)
+
+## Directory Layout
+```
+./
+├── src/          # App source; copied to /app/src (docker) or mounted (compose)
+├── checkpoints/  # Model checkpoints -> /app/checkpoints
+├── data/         # Input data        -> /app/data
+├── output/       # Generated output  -> /app/output
+└── docker files
+```
+
+### Build/Run Diagram
+```mermaid
+flowchart LR
+  subgraph Host
+    A[src/]:::code
+    B[checkpoints/]
+    C[data/]
+    D[output/]
+  end
+  subgraph Image
+    I[/app/src]:::code
+  end
+  subgraph Container
+    X[/app/src]:::code
+    Y[/app/checkpoints]
+    Z[/app/data]
+    O[/app/output]
+  end
+
+  A -- docker build --> I
+  A -- compose mount --- X
+  B --- Y
+  C --- Z
+  D --- O
+
+  classDef code fill:#eef,stroke:#88f
+```
+
+## Set Up Models and Try Inference
+Inside the container:
+```bash
+cd /app
+git lfs install
+git clone https://huggingface.co/digital-avatar/ditto-talkinghead checkpoints
+
+cd /app/src
+python inference.py \
+  --data_root "/app/checkpoints/ditto_trt_Ampere_Plus" \
+  --cfg_pkl "/app/checkpoints/ditto_cfg/v0.4_hubert_cfg_trt.pkl" \
+  --audio_path "/app/data/audio.wav" \
+  --source_path "/app/data/source_image.png" \
+  --output_path "/app/output/result.mp4"
+```
+
+## Realtime Streaming (WebSocket + FastAPI)
+Inside the container:
+```bash
 cd /app/src
 
-# Start the streaming server (WebSocket + FastAPI)
+# Start the streaming server
 python streaming_server.py \
   --host 0.0.0.0 \
   --port 8000 \
   --cfg_pkl "/app/checkpoints/ditto_cfg/v0.4_hubert_cfg_trt_online.pkl" \
   --data_root "/app/checkpoints/ditto_trt_Ampere_Plus"
 
-# Quick test client (runs in the same container, uses example inputs)
+# Simple test client
 python streaming_client.py \
   --server ws://localhost:8000 \
   --client_id test_client \
   --audio_path /app/src/example/audio.wav \
   --source_path /app/src/example/image.png \
   --timeout 60
-
-# Open from your machine (if port 8000 is exposed):
-# http://YOUR_SERVER_IP:8000/demo  (remote server)
-# http://localhost:8000/demo       (local dev)
-
-# The demo page connects via WebSocket to `${location.host}` and can:
-# - Start streaming using server-side paths (defaults: /app/src/example/*)
-# - Upload audio/image from your browser (stored under /app/data/uploads) and then start streaming
 ```
+From your browser: `http://localhost:8000/demo` (or `http://YOUR_SERVER_IP:8000/demo`).
 
-⚠️ **Notes:** 
-- Make sure to put a source image (avatar photo) at `/app/data/source_image.png` 
-- For remote servers, replace `YOUR_SERVER_IP` with your actual server IP or hostname
-- The WebSocket URL is automatically detected from the browser location
+Notes:
+- Put a source image at `/app/data/source_image.png`.
+- The demo page infers WebSocket URL from the browser location.
+- See `src/STREAMING_SETUP.md` and `src/STREAMING_OPTIMIZATIONS.md` for more.
 
-### 📺 RTMP Service (YouTube/Twitch Live)
+## Working with Source Code (No Submodules)
+`src/` lives in this repo. Edit and commit directly:
 ```bash
-# Inside container  
-cd /app/src
-python rtmp_streaming_service.py "/app/checkpoints/ditto_cfg/v0.4_hubert_cfg_trt.pkl" "/app/checkpoints/ditto_trt_Ampere_Plus"
-
-# Start streaming via API
-curl -X POST "http://localhost:8000/start_stream/my_stream" \
-  -H "Content-Type: application/json" \
-  -d '{"source_path": "/app/data/avatar.png", "rtmp_url": "rtmp://your_stream_url"}'
-```
-
-**See [STREAMING_GUIDE.md](src/STREAMING_GUIDE.md) for complete documentation.**
-
-## Working with the Git Submodule
-
-The `src/` directory is a git submodule pointing to your fork. To work with it:
-
-```bash
-# Update the submodule to latest from your fork
-git submodule update --remote src
-
-# Make changes to the code in ./src/
-# Then commit and push from within the src directory
-cd src
-git add .
-git commit -m "Your changes"
-git push origin main
-
-# Update the main repository to point to the new commit
-cd ..
 git add src
-git commit -m "Update submodule"
+git commit -m "Update app code"
 git push
 ```
-
-## 🚀 Remote Deployment & Submodules
-
-### For Remote Servers:
-
-1. **Clone with submodules:**
-```bash
-git clone --recursive https://github.com/your-username/ditto-container.git
-```
-
-2. **Use the setup script:**
-```bash
-cd ditto-container
-./setup.sh  # Handles everything automatically
-```
-
-### Submodule Troubleshooting:
-
-**If src/ directory is empty after cloning:**
-```bash
-git submodule update --init --recursive
-```
-
-**If submodule is out of date:**
-```bash
-git submodule update --remote --recursive
-```
-
-**To update submodule to latest commit:**
+Tracking upstream (optional):
 ```bash
 cd src
-git pull origin main
-cd ..
-git add src
-git commit -m "Update submodule to latest"
+git remote add upstream https://github.com/antgroup/ditto-talkinghead.git
+git fetch upstream
+# merge or cherry-pick as needed
 ```
 
 ## GPU Compatibility
-
-The pre-built TensorRT models are compatible with `Ampere_Plus` GPUs. If your GPU doesn't support this, you'll need to convert the ONNX models to TensorRT inside the container:
-
+Prebuilt TensorRT models target Ampere+ GPUs. If your GPU differs, convert ONNX → TensorRT in the container:
 ```bash
 cd /app/src
 python scripts/cvt_onnx_to_trt.py \
   --onnx_dir "/app/checkpoints/ditto_onnx" \
   --trt_dir "/app/checkpoints/ditto_trt_custom"
 ```
-
-Then use `--data_root=/app/checkpoints/ditto_trt_custom` in your inference command.
+Then pass `--data_root=/app/checkpoints/ditto_trt_custom` to inference.
 
 ## Troubleshooting
-
-### GPU Not Detected
-Ensure you have:
-- NVIDIA drivers installed on the host
-- NVIDIA Docker runtime installed
-- Used `--gpus all` flag or proper docker-compose GPU configuration
-
-### Permission Issues
-The container runs as a non-root user. If you encounter permission issues with mounted volumes, adjust the ownership:
-```bash
-sudo chown -R 1000:1000 ./checkpoints ./data ./output ./src
-```
-
-### Memory Issues
-This model requires significant GPU memory. Ensure your GPU has enough VRAM (recommended: 8GB+).
-
-### cuDNN Library Issues
-If you get errors about missing `libcudnn.so.8`, this should be resolved as the Dockerfile installs cuDNN8 manually via apt packages (`libcudnn8` and `libcudnn8-dev`).
-
-
-## Run on OCI
-
-## Push the container to gitlab
-
-```
-docker build -t gitlab-master.nvidia.com/fciannella/ditto-container/ditto-container:0.0.1 -t gitlab-master.nvidia.com/fciannella/ditto-container/ditto-container:latest .
-docker push gitlab-master.nvidia.com/fciannella/ditto-container/ditto-container:0.0.1
-docker push gitlab-master.nvidia.com/fciannella/ditto-container/ditto-container:latest
-```
-
-## Run the container on OCI
-
-```
-srun -A llmservice_nemo_mlops -p interactive_singlenode -G 4 --time 04:00:00 --container-mounts /lustre/fsw/portfolios/llmservice/users/fciannella/cache:/root/.cache,/lustre/fsw/portfolios/llmservice/users/fciannella/src:/root/src --container-image gitlab-master.nvidia.com/fciannella/ditto-container/ditto-container:latest --pty bash
-```
-
-
-## Test the inference
-
-```
-python inference.py \
-    --data_root "./checkpoints/ditto_trt_Ampere_Plus" \
-    --cfg_pkl "./checkpoints/ditto_cfg/v0.4_hubert_cfg_trt.pkl" \
-    --audio_path "./tmpcc1gbdw3.wav" \
-    --source_path "./chris_avatar.png" \
-    --output_path "./result.mp4" 
-```
-
+- GPU not detected: check host NVIDIA drivers, NVIDIA Container Toolkit, and `--gpus all`/Compose GPU config.
+- Permission issues with volumes: `sudo chown -R 1000:1000 ./checkpoints ./data ./output ./src`
+- Out of memory: model is heavy; 8GB+ VRAM recommended.
+- cuDNN errors: the image installs `libcudnn8`/`libcudnn8-dev` via apt; rebuild if you modified the base.
 
 ## License
+Apache-2.0 (aligned with the upstream Ditto Talking Head project).
 
-This Docker setup is provided under the same Apache-2.0 license as the original ditto-talkinghead project. 
-
-
-
-
-
-export TMPDIR=/root/src/.cache
-export TEMP=/root/src/.cache
-export TMP=/root/src/.cache
-export PYXBLD_DIR=/root/src/.cache/pyxbld
-mkdir -p /root/src/.cache/pyxbld
-
-# Clean up any existing build cache
-rm -rf /root/.pyxbld/
