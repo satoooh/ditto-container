@@ -71,13 +71,13 @@ flowchart LR
     D[output/]
   end
   subgraph Image
-    I[/app/src]:::code
+    I[[/app/src]]:::code
   end
   subgraph Container
-    X[/app/src]:::code
-    Y[/app/checkpoints]
-    Z[/app/data]
-    O[/app/output]
+    X[[/app/src]]:::code
+    Y[[/app/checkpoints]]
+    Z[[/app/data]]
+    O[[/app/output]]
   end
 
   A -- docker build --> I
@@ -165,4 +165,3 @@ Then pass `--data_root=/app/checkpoints/ditto_trt_custom` to inference.
 
 ## License
 Apache-2.0 (aligned with the upstream Ditto Talking Head project).
-
