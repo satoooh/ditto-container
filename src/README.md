@@ -67,8 +67,8 @@ python streaming_server.py \
 主な特徴
 - FastAPI + WebSocket によりリアルタイム配信
 - 起動時に TensorRT/StreamSDK をプリウォーム（初回フレーム短縮）
-- フレームはバイナリ WebSocket（ヘッダ `!IdI` + JPEG）で送信。
-- キュー長と JPEG 品質を監視し、混雑時に自動で品質を調整
+- フレームはバイナリ WebSocket（ヘッダ `!IdI` + WebP）で送信。
+- キュー長と WebP 品質を監視し、混雑時に自動で品質を調整
 - `/upload` エンドポイントでブラウザから音声・画像をアップロード可能
 
 ### クライアント/ブラウザ
@@ -95,7 +95,7 @@ pytest
 ## トラブルシューティング
 - コンテナが即停止する → `setup.sh run` は `sleep infinity` にフォールバックしますが、ログ (`docker logs ditto-container`) を確認してください。
 - チェックポイントが読み込めない → `checkpoints/` のパーミッションを `1000:1000` に合わせる。
-- ストリーミングが遅い → `streaming_server.py` のログでキューサイズ・ドロップ数を確認。必要に応じて `--host`/`--port` や JPEG 品質閾値を調整。
+- ストリーミングが遅い → `streaming_server.py` のログでキューサイズ・ドロップ数を確認。必要に応じて `--host`/`--port` や WebP 品質閾値を調整。
 
 ## ライセンス
 - 同梱コードは Apache-2.0（上流 Ditto Talking Head と同一）。

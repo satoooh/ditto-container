@@ -212,7 +212,8 @@ class StreamingServer:
                     if (typeof ev.data === 'string') {
                       const msg = JSON.parse(ev.data);
                       if(msg.type === 'frame' && msg.frame_data){
-                        imgEl.src = 'data:image/jpeg;base64,' + msg.frame_data; // legacy path
+                        const mime = msg.mime || 'image/webp';
+                        imgEl.src = `data:${mime};base64,` + msg.frame_data; // legacy path
                       } else if(msg.type === 'streaming_started'){
                         log('Streaming started');
                       } else if(msg.type === 'streaming_completed'){
@@ -223,14 +224,14 @@ class StreamingServer:
                         log('Server error: ' + msg.message);
                       }
                     } else {
-                      // Binary frame: header (uint32 frame_id, double ts, uint32 len) + jpeg bytes
+                      // Binary frame: header (uint32 frame_id, double ts, uint32 len) + WebP bytes
                       const buf = ev.data; // ArrayBuffer
                       const dv = new DataView(buf);
                       const frameId = dv.getUint32(0, false);
                       const ts = dv.getFloat64(4, false);
                       const len = dv.getUint32(12, false);
-                      const jpeg = buf.slice(16, 16 + len);
-                      const blob = new Blob([jpeg], {type:'image/jpeg'});
+                      const webp = buf.slice(16, 16 + len);
+                      const blob = new Blob([webp], {type:'image/webp'});
                       const urlObj = URL.createObjectURL(blob);
                       imgEl.onload = () => URL.revokeObjectURL(urlObj);
                       imgEl.src = urlObj;
@@ -472,7 +473,7 @@ class StreamingServer:
                     break
 
                 msg_type = message.get('type')
-                if msg_type == 'frame' and 'jpeg_data' in message:
+                if msg_type == 'frame' and 'frame_bytes' in message:
                     prefer_binary = self.active_streams.get(client_id, {}).get('prefer_binary', True)
                     if prefer_binary:
                         await self.send_binary_frame(client_id, message)
@@ -495,12 +496,13 @@ class StreamingServer:
         if client_id not in self.active_connections:
             return
         try:
-            b64 = base64.b64encode(message['jpeg_data']).decode('utf-8')
+            b64 = base64.b64encode(message['frame_bytes']).decode('utf-8')
             legacy_msg = {
                 'type': 'frame',
                 'frame_id': message.get('frame_id'),
                 'frame_data': b64,
-                'timestamp': message.get('timestamp')
+                'timestamp': message.get('timestamp'),
+                'mime': 'image/webp'
             }
             await self.send_message(client_id, legacy_msg)
         except Exception as exc:
@@ -508,17 +510,17 @@ class StreamingServer:
 
     async def send_binary_frame(self, client_id: str, message: Dict[str, Any]):
         """Send a single frame as binary WebSocket message.
-        Format: frame_id(uint32 BE) + timestamp(double BE) + data_len(uint32 BE) + jpeg_bytes
+        Format: frame_id(uint32 BE) + timestamp(double BE) + data_len(uint32 BE) + WebP bytes
         """
         if client_id not in self.active_connections:
             return
         try:
             frame_id = int(message.get('frame_id', 0))
             ts = float(message.get('timestamp', time.time()))
-            jpeg_bytes = message.get('jpeg_data', b'')
-            if not isinstance(jpeg_bytes, (bytes, bytearray)):
-                jpeg_bytes = bytes(jpeg_bytes)
-            payload = build_binary_frame_payload(frame_id, ts, jpeg_bytes)
+            frame_bytes = message.get('frame_bytes', b'')
+            if not isinstance(frame_bytes, (bytes, bytearray)):
+                frame_bytes = bytes(frame_bytes)
+            payload = build_binary_frame_payload(frame_id, ts, frame_bytes)
             await self.active_connections[client_id].send_bytes(payload)
         except Exception as e:
             logger.error(f"❌ Error sending binary frame to {client_id}: {e}")
@@ -714,7 +716,7 @@ class WebSocketFrameWriter:
         self.frame_count = 0
         
     def __call__(self, frame_rgb: np.ndarray, fmt: str = "rgb"):
-        # Convert to JPEG bytes for binary WebSocket transmission
+        # Convert to WebP bytes for binary WebSocket transmission
         if fmt == "rgb":
             # Convert RGB to BGR for OpenCV
             frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
@@ -725,27 +727,27 @@ class WebSocketFrameWriter:
         if queue_depth > DEFAULT_QUEUE_SIZE * 0.8:
             quality = 60
         elif queue_depth > DEFAULT_QUEUE_SIZE * 0.5:
-            quality = 70
+            quality = 75
         else:
-            quality = 80
+            quality = 85
 
-        # Encode frame as JPEG (adaptive quality)
-        _, buffer = cv2.imencode('.jpg', frame_bgr, [cv2.IMWRITE_JPEG_QUALITY, quality])
-        jpeg_bytes = buffer.tobytes()
+        # Encode frame as WebP (adaptive品質)
+        _, buffer = cv2.imencode('.webp', frame_bgr, [cv2.IMWRITE_WEBP_QUALITY, quality])
+        image_bytes = buffer.tobytes()
         
         # Send frame via WebSocket using queue
         message = {
             "type": "frame",
             "frame_id": self.frame_count,
-            "jpeg_data": jpeg_bytes,
+            "frame_bytes": image_bytes,
             "timestamp": time.time()
         }
-        
+
         self.server.enqueue_frame(self.client_id, message)
         if self.frame_count % 100 == 0:
             logger.info(
                 f"Enqueued frame {self.frame_count} for {self.client_id} "
-                f"(quality={quality}%, queue≈{queue_depth})"
+                f"(WebP quality={quality}%, queue≈{queue_depth})"
             )
         
         self.frame_count += 1

@@ -40,7 +40,7 @@ if self.frame_count % 100 == 0:  # Log every 100th frame
 ```
 **Impact**: 99% less logging I/O, faster frame processing
 
-### **3. Binary WebSocket Messages**
+### **3. Binary WebSocket Messages (WebP)**
 ```python
 # ❌ BEFORE: Base64 + JSON overhead
 frame_base64 = base64.b64encode(buffer).decode('utf-8')  # +33% size
@@ -62,9 +62,9 @@ queue_size = self.server.frame_queues[self.client_id].qsize()
 if queue_size > 30:
     quality = 60    # Lower quality when backed up
 elif queue_size > 15:
-    quality = 70    # Medium quality  
+    quality = 75    # Medium quality  
 else:
-    quality = 80    # Normal quality
+    quality = 85    # Normal quality
 ```
 **Impact**: Maintains framerate under load
 
@@ -95,7 +95,7 @@ except asyncio.QueueFull:
 ### **Network Efficiency**
 | Metric | Original | Optimized | Improvement |
 |--------|----------|-----------|-------------|
-| Frame Size | 61KB (46KB + base64) | 46KB (raw JPEG) | **25% smaller** |
+| Frame Size | 61KB (46KB + base64) | 32KB (WebP, binary) | **≈50% smaller** |
 | Protocol Overhead | JSON headers | 16-byte binary header | **Minimal overhead** |
 | Queue Memory | 500 × 61KB = 30.5MB | 50 × 46KB = 2.3MB | **93% less memory** |
 
@@ -163,7 +163,7 @@ nethogs  # Real-time bandwidth per process
 
 1. **Frame Batching**: Send multiple frames per WebSocket message
 2. **Compression**: Use WebSocket compression extensions  
-3. **Parallel Encoding**: Multi-threaded JPEG encoding
+3. **Parallel Encoding**: マルチスレッド WebP エンコード
 4. **Dynamic Resolution**: Reduce resolution under network stress
 5. **Predictive Dropping**: Drop frames before queue fills
 

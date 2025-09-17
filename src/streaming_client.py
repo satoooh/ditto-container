@@ -257,12 +257,12 @@ class StreamingClient:
 
     async def handle_binary_frame(self, payload: bytes):
         try:
-            frame_id, timestamp, jpeg_bytes = parse_binary_frame(payload)
+            frame_id, timestamp, frame_bytes = parse_binary_frame(payload)
         except ValueError as exc:
             logger.error(f"Invalid binary frame received: {exc}")
             return
 
-        self._record_frame(frame_id, timestamp, jpeg_bytes)
+        self._record_frame(frame_id, timestamp, frame_bytes)
 
     def _record_frame(self, frame_id: int, timestamp: float, frame_bytes: bytes) -> None:
         arrival_time = time.time()
@@ -275,7 +275,7 @@ class StreamingClient:
             frame_img = cv2.imdecode(frame_array, cv2.IMREAD_COLOR)
             import os
             os.makedirs(self.frame_save_dir, exist_ok=True)
-            cv2.imwrite(f"{self.frame_save_dir}/frame_{frame_id:06d}.jpg", frame_img)
+            cv2.imwrite(f"{self.frame_save_dir}/frame_{frame_id:06d}.webp", frame_img)
 
         decode_time = time.time() - decode_start
 
