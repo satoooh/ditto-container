@@ -17,28 +17,32 @@ git clone https://github.com/your-username/ditto-container.git
 cd ditto-container
 ```
 
-### 2) Build (choose one)
-- Compose (recommended for development):
+### 2) Build & Run via helper script (recommended)
+```bash
+./setup.sh all
+# or run steps individually:
+./setup.sh build
+./setup.sh run
+```
+
+### 3) Alternative: manual Docker commands
+- Compose (development-friendly):
   ```bash
   docker compose up -d --build
   # or: docker-compose up -d --build
   ```
-- Plain Docker:
+- Plain Docker build/run:
   ```bash
   docker build -t ditto-talkinghead .
+  docker run -d -it --gpus all \
+    -v "$(pwd)/checkpoints:/app/checkpoints" \
+    -v "$(pwd)/data:/app/data" \
+    -v "$(pwd)/output:/app/output" \
+    -p 8000:8000 \
+    --restart unless-stopped \
+    --name ditto-container \
+    ditto-talkinghead bash -lc 'sleep infinity'
   ```
-
-### 3) Run (if you built with plain Docker)
-```bash
-docker run -d -it --gpus all \
-  -v "$(pwd)/checkpoints:/app/checkpoints" \
-  -v "$(pwd)/data:/app/data" \
-  -v "$(pwd)/output:/app/output" \
-  -p 8000:8000 \
-  --restart unless-stopped \
-  --name ditto-container \
-  ditto-talkinghead bash -lc 'sleep infinity'
-```
 
 ### Common Ops
 - Enter container (Compose v2): `docker compose exec ditto-talkinghead bash`
@@ -127,10 +131,25 @@ python streaming_client.py \
 ```
 From your browser: `http://localhost:8000/demo` (or `http://YOUR_SERVER_IP:8000/demo`).
 
+### Streaming Optimizations
+- CUDA/TensorRT pre-warm runs during FastAPI startup to shave first-frame latency.
+- Binary WebSocket transport with compact headers reduces bandwidth ~25% vs base64 JSON.
+- Async queues with adaptive JPEG quality keep latency low under load; frames drop gracefully instead of blocking.
+- Browser demo and CLI client default to binary transport and expose `--transport json` for compatibility testing.
+
 Notes:
 - Put a source image at `/app/data/source_image.png`.
+- Frames are streamed as binary WebSocket messages by default. Use `python streaming_client.py --transport json ...` if you must keep the legacy base64 pathway.
 - The demo page infers WebSocket URL from the browser location.
 - See `src/STREAMING_SETUP.md` and `src/STREAMING_OPTIMIZATIONS.md` for more.
+- Minimal protocol tests live in `src/tests`; run `pytest -k binary_frame` to verify packing/parsingのみを実行可能です。
+
+## Testing
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+`pytest -k binary_frame` でプロトコル関連テストのみを実行できます。
 
 ## Working with Source Code (No Submodules)
 `src/` lives in this repo. Edit and commit directly:

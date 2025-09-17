@@ -3,13 +3,13 @@ import json
 import logging
 import os
 import time
-import queue
 import threading
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import base64
 import cv2
 import numpy as np
-import struct
+from asyncio import QueueFull, QueueEmpty
+from streaming_protocol import build_binary_frame_payload
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -22,6 +22,8 @@ from stream_pipeline_online import StreamSDK
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+DEFAULT_QUEUE_SIZE = 50
+
 
 class StreamingServer:
     def __init__(self, cfg_pkl: str, data_root: str):
@@ -29,7 +31,10 @@ class StreamingServer:
         self.data_root = data_root
         self.active_connections: Dict[str, WebSocket] = {}
         self.active_streams: Dict[str, Dict[str, Any]] = {}
-        self.frame_queues: Dict[str, queue.Queue] = {}  # Frame queues for each client
+        self.frame_queues: Dict[str, asyncio.Queue] = {}
+        self.loop: Optional[asyncio.AbstractEventLoop] = None
+        self._queue_depths: Dict[str, int] = {}
+        self._queue_depth_lock = threading.Lock()
         
         # Initialize FastAPI app
         self.app = FastAPI(title="Ditto Streaming Server", version="1.0.0")
@@ -62,6 +67,11 @@ class StreamingServer:
             await _prewarm_async()
         except Exception as e:
             logger.warning(f"Prewarm task error: {e}")
+        finally:
+            try:
+                self.loop = asyncio.get_running_loop()
+            except RuntimeError:
+                self.loop = None
         
     def setup_routes(self):
         @self.app.get("/")
@@ -88,7 +98,7 @@ class StreamingServer:
             base_dir.mkdir(parents=True, exist_ok=True)
             resp = {}
 
-            def save(upload: UploadFile, tag: str):
+            async def save(upload: UploadFile, tag: str):
                 suffix = pathlib.Path(upload.filename or "").suffix.lower() or (".wav" if tag=="audio" else ".png")
                 # very light validation
                 if tag == "audio" and suffix not in [".wav", ".mp3", ".m4a", ".flac", ".ogg"]:
@@ -102,12 +112,12 @@ class StreamingServer:
                 return str(dst)
 
             if audio is not None:
-                path = save(audio, "audio")
+                path = await save(audio, "audio")
                 if isinstance(path, JSONResponse):
                     return path
                 resp["audio_path"] = path
             if source is not None:
-                path = save(source, "source")
+                path = await save(source, "source")
                 if isinstance(path, JSONResponse):
                     return path
                 resp["source_path"] = path
@@ -251,7 +261,54 @@ class StreamingServer:
         @self.app.websocket("/ws/{client_id}")
         async def websocket_endpoint(websocket: WebSocket, client_id: str):
             await self.handle_websocket_connection(websocket, client_id)
-    
+
+    def _set_queue_depth(self, client_id: str, depth: int) -> None:
+        with self._queue_depth_lock:
+            if depth <= 0:
+                self._queue_depths.pop(client_id, None)
+            else:
+                self._queue_depths[client_id] = depth
+
+    def get_queue_depth(self, client_id: str) -> int:
+        with self._queue_depth_lock:
+            return self._queue_depths.get(client_id, 0)
+
+    def enqueue_frame(self, client_id: str, message: Optional[Dict[str, Any]]) -> None:
+        frame_queue = self.frame_queues.get(client_id)
+        if not frame_queue:
+            logger.debug(f"Frame queue missing for {client_id}, dropping message")
+            return
+
+        def _put() -> None:
+            try:
+                if message is None and frame_queue.full():
+                    try:
+                        frame_queue.get_nowait()
+                    except QueueEmpty:
+                        pass
+                frame_queue.put_nowait(message)
+            except QueueFull:
+                if message is not None:
+                    logger.warning(f"Dropping frame for {client_id}: queue full ({frame_queue.maxsize})")
+            finally:
+                self._set_queue_depth(client_id, frame_queue.qsize())
+
+        target_loop = self.loop
+        if target_loop and target_loop.is_running():
+            target_loop.call_soon_threadsafe(_put)
+            return
+
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.debug(f"Event loop not running when queuing frame for {client_id}; dropping message")
+            return
+
+        if running_loop.is_running():
+            _put()  # same thread as loop
+        else:
+            logger.debug(f"Event loop inactive when queuing frame for {client_id}; dropping message")
+
     async def handle_websocket_connection(self, websocket: WebSocket, client_id: str):
         await websocket.accept()
         self.active_connections[client_id] = websocket
@@ -274,16 +331,9 @@ class StreamingServer:
     
     async def handle_message(self, client_id: str, data: Dict[str, Any]):
         message_type = data.get("type")
-        
-        # Test async execution right here
-        logger.info(f"🔍 Testing async in handle_message for {client_id}")
-        await asyncio.sleep(0.001)
-        logger.info(f"✅ Async works in handle_message for {client_id}")
-        
+
         if message_type == "start_streaming":
-            logger.info(f"📞 About to call start_streaming for {client_id}")
             await self.start_streaming(client_id, data)
-            logger.info(f"📞 start_streaming returned for {client_id}")
         elif message_type == "stop_streaming":
             await self.stop_streaming(client_id)
         elif message_type == "ping":
@@ -321,7 +371,7 @@ class StreamingServer:
         logger.info(f"Starting streaming for client {client_id}")
         
         # Determine frame transport
-        prefer_binary = bool(config.get("binary", False))
+        prefer_binary = bool(config.get("binary", True))
 
         # Send streaming started confirmation
         await self.send_message(client_id, {
@@ -333,11 +383,11 @@ class StreamingServer:
         })
         logger.info(f"Sent streaming started confirmation for client {client_id}")
         
-        # Create frame queue for this client  
-        # Increased queue size to handle full streams without dropping frames
-        # 410 frames * ~200KB = ~82MB memory per client (reasonable for modern systems)
-        self.frame_queues[client_id] = queue.Queue(maxsize=500)
-        logger.info(f"Created frame queue for client {client_id}")
+        # Create frame queue for this client
+        # Small buffer keeps latency low while absorbing short bursts
+        self.frame_queues[client_id] = asyncio.Queue(maxsize=DEFAULT_QUEUE_SIZE)
+        self._set_queue_depth(client_id, 0)
+        logger.info(f"Created frame queue for client {client_id} (max={DEFAULT_QUEUE_SIZE})")
         
         # Add client to active_streams BEFORE creating frame sender task
         # This ensures the frame sender worker can find the client in active_streams
@@ -378,24 +428,8 @@ class StreamingServer:
                     logger.error(f"Streaming task failed for {client_id}: {task.exception()}")
                 else:
                     logger.info(f"Streaming task completed successfully for {client_id}")
-            
+
             streaming_task.add_done_callback(task_done_callback)
-            
-            # Test that async tasks are working - simple test task
-            async def test_task():
-                await asyncio.sleep(0.1)
-                logger.info(f"Test task executed successfully for {client_id}")
-            
-            test_task_obj = asyncio.create_task(test_task())
-            logger.info(f"Created test task for {client_id}")
-            
-            # Try to immediately await a simple task to see if it works
-            try:
-                logger.info(f"🧪 Testing immediate async execution for {client_id}")
-                await asyncio.sleep(0.001)
-                logger.info(f"✅ Immediate async works for {client_id}")
-            except Exception as e:
-                logger.error(f"❌ Immediate async failed for {client_id}: {e}")
             
         except Exception as e:
             logger.error(f"Error creating streaming task for {client_id}: {e}")
@@ -414,74 +448,63 @@ class StreamingServer:
         logger.info(f"Updated active_streams with task objects for {client_id}")
     
     async def frame_sender_worker(self, client_id: str):
-        """Worker to send frames from queue via WebSocket"""
+        """Async worker that forwards queued frames to the WebSocket client."""
         logger.info(f"🚀 STARTING frame_sender_worker for {client_id}")
         frames_sent = 0
-        
+        frame_queue = self.frame_queues.get(client_id)
+
+        if frame_queue is None:
+            logger.error(f"❌ Frame queue missing for {client_id}")
+            return
+
         try:
-            # Continue until poison pill received, regardless of active_streams status
-            # This ensures all queued frames are sent even after pipeline completes
             while True:
                 try:
-                    # Get frame from queue (non-blocking)
-                    frame_queue = self.frame_queues.get(client_id)
-                    if not frame_queue:
-                        logger.error(f"❌ No frame queue found for {client_id}")
+                    message = await asyncio.wait_for(frame_queue.get(), timeout=1.0)
+                    self._set_queue_depth(client_id, frame_queue.qsize())
+                except asyncio.TimeoutError:
+                    if client_id not in self.active_streams:
                         break
-                    
-                    queue_size = frame_queue.qsize()
-                    if queue_size > 0:
-                        logger.info(f"📊 Queue size for {client_id}: {queue_size}")
-                        
-                    # Use non-blocking get_nowait() instead of blocking get()
-                    message = frame_queue.get_nowait()
-                    if message is None:  # Poison pill - proper exit condition
-                        logger.info(f"💊 Poison pill received for {client_id}, processed all frames")
-                        break
-                    
-                    msg_type = message.get('type')
-                    if msg_type == 'frame' and 'jpeg_data' in message:
-                        prefer_binary = self.active_streams.get(client_id, {}).get('prefer_binary', False)
-                        if prefer_binary:
-                            await self.send_binary_frame(client_id, message)
-                        else:
-                            # Fallback: send legacy JSON with base64
-                            try:
-                                b64 = base64.b64encode(message['jpeg_data']).decode('utf-8')
-                                legacy_msg = {
-                                    'type': 'frame',
-                                    'frame_id': message.get('frame_id'),
-                                    'frame_data': b64,
-                                    'timestamp': message.get('timestamp')
-                                }
-                                await self.send_message(client_id, legacy_msg)
-                            except Exception as e:
-                                logger.error(f"Legacy send failed: {e}")
-                    else:
-                        await self.send_message(client_id, message)
-                    frames_sent += 1
-                    
-                    if frames_sent % 10 == 0:
-                        logger.info(f"📈 Sent {frames_sent} messages to {client_id}")
-                    
-                except queue.Empty:
-                    # Queue is empty, sleep a bit and continue
-                    # Don't exit - pipeline might still be generating frames
-                    await asyncio.sleep(0.01)  # Non-blocking sleep
                     continue
-                except Exception as e:
-                    logger.error(f"❌ Error in frame sender for {client_id}: {e}")
-                    logger.error(f"❌ Exception type: {type(e)}")
-                    import traceback
-                    logger.error(f"❌ Traceback: {traceback.format_exc()}")
+                
+                if message is None:
+                    logger.debug(f"Poison pill received for {client_id}")
                     break
-                    
-        except Exception as e:
-            logger.error(f"❌ Frame sender worker error for {client_id}: {e}")
+
+                msg_type = message.get('type')
+                if msg_type == 'frame' and 'jpeg_data' in message:
+                    prefer_binary = self.active_streams.get(client_id, {}).get('prefer_binary', True)
+                    if prefer_binary:
+                        await self.send_binary_frame(client_id, message)
+                    else:
+                        await self.send_legacy_frame(client_id, message)
+                    frames_sent += 1
+                    if frames_sent % 50 == 0:
+                        logger.info(f"📈 Sent {frames_sent} frames to {client_id} (queue={frame_queue.qsize()})")
+                else:
+                    await self.send_message(client_id, message)
+        except Exception as exc:
             import traceback
+            logger.error(f"❌ Frame sender worker error for {client_id}: {exc}")
             logger.error(f"❌ Worker traceback: {traceback.format_exc()}")
-        
-        logger.info(f"🏁 EXITING frame_sender_worker for {client_id}, sent {frames_sent} messages")
+        finally:
+            self._set_queue_depth(client_id, 0)
+            logger.info(f"🏁 EXITING frame_sender_worker for {client_id}, frames sent={frames_sent}")
+
+    async def send_legacy_frame(self, client_id: str, message: Dict[str, Any]):
+        if client_id not in self.active_connections:
+            return
+        try:
+            b64 = base64.b64encode(message['jpeg_data']).decode('utf-8')
+            legacy_msg = {
+                'type': 'frame',
+                'frame_id': message.get('frame_id'),
+                'frame_data': b64,
+                'timestamp': message.get('timestamp')
+            }
+            await self.send_message(client_id, legacy_msg)
+        except Exception as exc:
+            logger.error(f"❌ Error sending legacy frame to {client_id}: {exc}")
 
     async def send_binary_frame(self, client_id: str, message: Dict[str, Any]):
         """Send a single frame as binary WebSocket message.
@@ -495,8 +518,8 @@ class StreamingServer:
             jpeg_bytes = message.get('jpeg_data', b'')
             if not isinstance(jpeg_bytes, (bytes, bytearray)):
                 jpeg_bytes = bytes(jpeg_bytes)
-            header = struct.pack('!IdI', frame_id, ts, len(jpeg_bytes))
-            await self.active_connections[client_id].send_bytes(header + jpeg_bytes)
+            payload = build_binary_frame_payload(frame_id, ts, jpeg_bytes)
+            await self.active_connections[client_id].send_bytes(payload)
         except Exception as e:
             logger.error(f"❌ Error sending binary frame to {client_id}: {e}")
             self.cleanup_client(client_id)
@@ -629,11 +652,8 @@ class StreamingServer:
         finally:
             # Send poison pill to frame sender
             if client_id in self.frame_queues:
-                try:
-                    self.frame_queues[client_id].put_nowait(None)
-                except queue.Full:
-                    pass
-            
+                self.enqueue_frame(client_id, None)
+
             # Clean up
             if client_id in self.active_streams:
                 del self.active_streams[client_id]
@@ -644,14 +664,11 @@ class StreamingServer:
             stream_info["streaming_task"].cancel()
             stream_info["frame_sender_task"].cancel()
             del self.active_streams[client_id]
-            
+
             # Send poison pill to frame queue
             if client_id in self.frame_queues:
-                try:
-                    self.frame_queues[client_id].put_nowait(None)
-                except queue.Full:
-                    pass
-            
+                self.enqueue_frame(client_id, None)
+
             await self.send_message(client_id, {
                 "type": "streaming_stopped",
                 "timestamp": time.time()
@@ -662,11 +679,9 @@ class StreamingServer:
         if client_id in self.active_connections:
             try:
                 message_type = message.get("type", "unknown")
-                logger.info(f"📡 Sending {message_type} to {client_id}")
-                
                 await self.active_connections[client_id].send_text(json.dumps(message))
-                
-                logger.info(f"✅ Successfully sent {message_type} to {client_id}")
+                if message_type in {"streaming_started", "metadata", "streaming_completed", "streaming_stopped"}:
+                    logger.info(f"Sent {message_type} to {client_id}")
             except Exception as e:
                 logger.error(f"❌ Error sending message to {client_id}: {e}")
                 logger.error(f"❌ Message type was: {message.get('type', 'unknown')}")
@@ -685,12 +700,9 @@ class StreamingServer:
             stream_info["frame_sender_task"].cancel()
             del self.active_streams[client_id]
         if client_id in self.frame_queues:
-            # Send poison pill and clean up queue
-            try:
-                self.frame_queues[client_id].put_nowait(None)
-            except queue.Full:
-                pass
+            self.enqueue_frame(client_id, None)
             del self.frame_queues[client_id]
+            self._set_queue_depth(client_id, 0)
 
 
 class WebSocketFrameWriter:
@@ -709,8 +721,16 @@ class WebSocketFrameWriter:
         else:
             frame_bgr = frame_rgb
             
-        # Encode frame as JPEG (keep default quality 80; can be tuned)
-        _, buffer = cv2.imencode('.jpg', frame_bgr, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        queue_depth = self.server.get_queue_depth(self.client_id)
+        if queue_depth > DEFAULT_QUEUE_SIZE * 0.8:
+            quality = 60
+        elif queue_depth > DEFAULT_QUEUE_SIZE * 0.5:
+            quality = 70
+        else:
+            quality = 80
+
+        # Encode frame as JPEG (adaptive quality)
+        _, buffer = cv2.imencode('.jpg', frame_bgr, [cv2.IMWRITE_JPEG_QUALITY, quality])
         jpeg_bytes = buffer.tobytes()
         
         # Send frame via WebSocket using queue
@@ -721,15 +741,12 @@ class WebSocketFrameWriter:
             "timestamp": time.time()
         }
         
-        # Put message in queue for async processing
-        if self.client_id in self.server.frame_queues:
-            try:
-                self.server.frame_queues[self.client_id].put_nowait(message)
-                logger.info(f"Frame {self.frame_count} queued for client {self.client_id}")
-            except queue.Full:
-                logger.warning(f"Frame queue full for client {self.client_id}, dropping frame {self.frame_count}")
-        else:
-            logger.error(f"No frame queue found for client {self.client_id}")
+        self.server.enqueue_frame(self.client_id, message)
+        if self.frame_count % 100 == 0:
+            logger.info(
+                f"Enqueued frame {self.frame_count} for {self.client_id} "
+                f"(quality={quality}%, queue≈{queue_depth})"
+            )
         
         self.frame_count += 1
         
@@ -745,12 +762,7 @@ class WebSocketFrameWriter:
             "timestamp": time.time()
         }
         
-        # Put message in queue for async processing
-        if self.client_id in self.server.frame_queues:
-            try:
-                self.server.frame_queues[self.client_id].put_nowait(message)
-            except queue.Full:
-                logger.warning(f"Frame queue full for client {self.client_id}, dropping close message")
+        self.server.enqueue_frame(self.client_id, message)
 
 
 def main():

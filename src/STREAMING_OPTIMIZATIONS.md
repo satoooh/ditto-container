@@ -1,5 +1,7 @@
 # Streaming Performance Optimizations
 
+> **Update (2025-09-17)**: These optimizations are now the default behavior of `streaming_server.py` and `streaming_client.py`. The previous `_optimized` variants have been removed.
+
 ## 🚨 **Critical Issues Fixed**
 
 ### **Original Problems (Causing 3.6 FPS vs 21 FPS network capacity)**
@@ -46,8 +48,9 @@ message = {"type": "frame", "frame_data": frame_base64, ...}
 await websocket.send_text(json.dumps(message))
 
 # ✅ AFTER: Binary protocol
-header = struct.pack('!Ifd', frame_id, timestamp, len(jpeg_data))
-binary_message = header + jpeg_data  # Raw JPEG bytes
+from streaming_protocol import build_binary_frame_payload
+
+binary_message = build_binary_frame_payload(frame_id, timestamp, jpeg_bytes)
 await websocket.send_bytes(binary_message)
 ```
 **Impact**: 25% smaller messages, faster transmission
@@ -102,37 +105,35 @@ except asyncio.QueueFull:
 **Optimized Target**: **18-20 FPS** (vs original 3.6 FPS)
 
 ### **Bottleneck Analysis**
-1. ✅ **Queue Management**: Fixed with asyncio.Queue
-2. ✅ **Logging Overhead**: Reduced by 99%  
-3. ✅ **Message Efficiency**: 25% smaller via binary protocol
-4. ✅ **Memory Usage**: 93% reduction in queue memory
-5. ⚠️ **GPU Processing**: Still limited by model inference speed
+1. ✅ **Queue Management**: `asyncio.Queue` に統一しポーリングを排除
+2. ✅ **Logging Overhead**: 100 フレームごとの統計ログのみ
+3. ✅ **Message Efficiency**: `build_binary_frame_payload` によるバイナリ転送
+4. ✅ **Memory Usage**: キュー長 50 で約 90% のメモリ削減
+5. ⚠️ **GPU Processing**: 依然としてモデル推論速度が全体の上限
 
 ## 🧪 **Testing the Optimizations**
 
-### **Run Optimized Server**
+### **Current Workflow**
 ```bash
-# Start optimized server
-python streaming_server_optimized.py --host 0.0.0.0 --port 8000
+# Server (optimized pipeline now default)
+python streaming_server.py \
+  --host 0.0.0.0 --port 8000 \
+  --cfg_pkl "/app/checkpoints/ditto_cfg/v0.4_hubert_cfg_trt_online.pkl" \
+  --data_root "/app/checkpoints/ditto_trt_Ampere_Plus"
 
-# Start optimized client  
-python streaming_client_optimized.py --server ws://10.49.160.118:8000 --client_id test_client
+# Client (binary transport enabled by default)
+python streaming_client.py \
+  --server ws://localhost:8000 \
+  --client_id bench \
+  --audio_path /app/src/example/audio.wav \
+  --source_path /app/src/example/image.png
+
+# Protocol unit tests
+pip install -r requirements-dev.txt
+pytest -k binary_frame
 ```
 
-### **Compare with Original**
-```bash
-# Original server for comparison
-python streaming_server.py --host 0.0.0.0 --port 8001
-
-# Original client
-python streaming_client.py --server ws://10.49.160.118:8001 --client_id test_client
-```
-
-### **Expected Results**
-| Version | Local FPS | Remote FPS | Memory Usage | Bandwidth |
-|---------|-----------|------------|--------------|-----------|
-| Original | ~31 FPS | ~3.6 FPS | ~30MB | ~11.4 Mbps |
-| Optimized | ~35 FPS | **~18-20 FPS** | ~2.3MB | **~8.5 Mbps** |
+目標値は GPU 性能に依存しますが、ネットワーク帯域の観点では 18–20 FPS を維持しつつ、初回フレーム遅延を 3 秒以内に収めることを想定しています。
 
 ## 🔍 **Monitoring Performance**
 

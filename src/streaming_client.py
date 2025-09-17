@@ -10,6 +10,7 @@ from dataclasses import dataclass
 import statistics
 import cv2
 import numpy as np
+from streaming_protocol import parse_binary_frame
 
 import websockets
 from websockets.exceptions import ConnectionClosed
@@ -18,6 +19,7 @@ from websockets.exceptions import ConnectionClosed
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
 
 
 @dataclass
@@ -155,13 +157,15 @@ class StreamingStats:
 
 
 class StreamingClient:
-    def __init__(self, server_url: str, client_id: str):
+    def __init__(self, server_url: str, client_id: str, prefer_binary: bool = True):
         self.server_url = server_url
         self.client_id = client_id
         self.stats = StreamingStats()
         self.websocket = None
         self.save_frames = False
         self.frame_save_dir = "received_frames"
+        self.prefer_binary = prefer_binary
+        self.active_binary = prefer_binary
         
     async def connect(self):
         """Connect to the streaming server"""
@@ -187,7 +191,8 @@ class StreamingClient:
             "audio_path": audio_path,
             "source_path": source_path,
             "setup_kwargs": config.get("setup_kwargs", {}),
-            "run_kwargs": config.get("run_kwargs", {})
+            "run_kwargs": config.get("run_kwargs", {}),
+            "binary": self.prefer_binary
         }
         
         try:
@@ -217,9 +222,13 @@ class StreamingClient:
         message_type = message.get("type")
         
         if message_type == "frame":
-            await self.handle_frame(message)
+            await self.handle_json_frame(message)
         elif message_type == "streaming_started":
-            logger.info(f"Streaming started: {message.get('audio_path')} -> {message.get('source_path')}")
+            self.active_binary = bool(message.get('binary', self.prefer_binary))
+            logger.info(
+                f"Streaming started: {message.get('audio_path')} -> {message.get('source_path')} "
+                f"(binary={self.active_binary})"
+            )
         elif message_type == "metadata":
             logger.info(f"Metadata: {message.get('audio_duration'):.2f}s, {message.get('expected_frames')} frames")
         elif message_type == "streaming_completed":
@@ -233,48 +242,55 @@ class StreamingClient:
         else:
             logger.debug(f"Unknown message type: {message_type}")
     
-    async def handle_frame(self, message: Dict[str, Any]):
+    async def handle_json_frame(self, message: Dict[str, Any]):
         """Handle incoming frame"""
         frame_id = message.get("frame_id")
         frame_data = message.get("frame_data")
         timestamp = message.get("timestamp")
-        arrival_time = time.time()
-        
-        # Decode frame
-        decode_start = time.time()
         try:
             frame_bytes = base64.b64decode(frame_data)
-            frame_size = len(frame_bytes)
-            
-            # Optional: decode to numpy array for processing
-            if self.save_frames:
-                frame_array = np.frombuffer(frame_bytes, dtype=np.uint8)
-                frame_img = cv2.imdecode(frame_array, cv2.IMREAD_COLOR)
-                
-                # Save frame (optional)
-                import os
-                os.makedirs(self.frame_save_dir, exist_ok=True)
-                cv2.imwrite(f"{self.frame_save_dir}/frame_{frame_id:06d}.jpg", frame_img)
-            
-            decode_time = time.time() - decode_start
-            
-            # Record frame statistics
-            frame_stats = FrameStats(
-                frame_id=frame_id,
-                timestamp=timestamp,
-                arrival_time=arrival_time,
-                frame_size=frame_size,
-                decode_time=decode_time
-            )
-            
-            self.stats.add_frame(frame_stats)
-            
-            # Print progress every 25 frames
-            if frame_id % 25 == 0:
-                logger.info(f"Received frame {frame_id}, size: {frame_size/1024:.1f}KB")
-            
         except Exception as e:
             logger.error(f"Error decoding frame {frame_id}: {e}")
+            return
+
+        self._record_frame(frame_id, timestamp, frame_bytes)
+
+    async def handle_binary_frame(self, payload: bytes):
+        try:
+            frame_id, timestamp, jpeg_bytes = parse_binary_frame(payload)
+        except ValueError as exc:
+            logger.error(f"Invalid binary frame received: {exc}")
+            return
+
+        self._record_frame(frame_id, timestamp, jpeg_bytes)
+
+    def _record_frame(self, frame_id: int, timestamp: float, frame_bytes: bytes) -> None:
+        arrival_time = time.time()
+
+        decode_start = time.time()
+        frame_size = len(frame_bytes)
+
+        if self.save_frames:
+            frame_array = np.frombuffer(frame_bytes, dtype=np.uint8)
+            frame_img = cv2.imdecode(frame_array, cv2.IMREAD_COLOR)
+            import os
+            os.makedirs(self.frame_save_dir, exist_ok=True)
+            cv2.imwrite(f"{self.frame_save_dir}/frame_{frame_id:06d}.jpg", frame_img)
+
+        decode_time = time.time() - decode_start
+
+        frame_stats = FrameStats(
+            frame_id=frame_id,
+            timestamp=timestamp,
+            arrival_time=arrival_time,
+            frame_size=frame_size,
+            decode_time=decode_time
+        )
+
+        self.stats.add_frame(frame_stats)
+
+        if frame_id % 25 == 0:
+            logger.info(f"Received frame {frame_id}, size: {frame_size/1024:.1f}KB")
     
     async def listen(self):
         """Listen for messages from server"""
@@ -284,9 +300,16 @@ class StreamingClient:
         
         try:
             while True:
-                message_text = await self.websocket.recv()
-                message = json.loads(message_text)
-                await self.handle_message(message)
+                incoming = await self.websocket.recv()
+                if isinstance(incoming, bytes):
+                    await self.handle_binary_frame(incoming)
+                else:
+                    try:
+                        message = json.loads(incoming)
+                    except json.JSONDecodeError as exc:
+                        logger.error(f"Failed to decode server message: {exc}")
+                        continue
+                    await self.handle_message(message)
         except ConnectionClosed:
             logger.info("Connection closed by server")
         except Exception as e:
@@ -323,11 +346,13 @@ async def main():
                       help="Save received frames to disk")
     parser.add_argument("--timeout", type=int, default=60,
                       help="Connection timeout in seconds")
+    parser.add_argument("--transport", choices=["binary", "json"], default="binary",
+                      help="Preferred frame transport (default: binary)")
     
     args = parser.parse_args()
     
     # Create client
-    client = StreamingClient(args.server, args.client_id)
+    client = StreamingClient(args.server, args.client_id, prefer_binary=(args.transport == "binary"))
     client.save_frames = args.save_frames
     
     # Connect to server
