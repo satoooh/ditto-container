@@ -44,7 +44,10 @@ RUN python -m pip install --upgrade pip
 
 RUN pip install --no-cache-dir \
     --extra-index-url https://pypi.nvidia.com \
-    "tensorrt==10.13.3.9"
+    "tensorrt==10.13.3.9" \
+    "tensorrt-cu13==10.13.3.9" \
+    "tensorrt-cu13-bindings==10.13.3.9" \
+    "tensorrt-cu13-libs==10.13.3.9"
 
 ENV PIP_EXTRA_INDEX_URL=https://pypi.org/simple
 
