@@ -1,5 +1,6 @@
 import os
 import argparse
+import importlib
 import torch
 
 
@@ -23,6 +24,59 @@ def _resolve_hardware_compatibility():
         import tensorrt as trt  # type: ignore
     except ImportError:
         return None, None
+
+    try:
+        enum_source = trt.HardwareCompatibilityLevel  # type: ignore[attr-defined]
+    except AttributeError:
+        enum_source = None
+
+    if enum_source is None:
+        try:
+            enum_source = getattr(
+                importlib.import_module("tensorrt.tensorrt"),
+                "HardwareCompatibilityLevel",
+                None,
+            )
+        except (ImportError, AttributeError):
+            enum_source = None
+
+    major, minor = torch.cuda.get_device_capability()
+
+    members = _enum_members(enum_source) if enum_source is not None else {}
+    ordered_levels = [
+        ("BLACKWELL", 12, None, None, None, "Blackwell_Plus"),
+        ("HOPPER", 9, 11, None, None, "Hopper_Plus"),
+        ("ADA", 8, 8, 9, None, "Ada"),
+        ("AMPERE", 8, 8, None, 8, "Ampere"),
+    ]
+
+    def _cli_name(enum_name: str) -> str:
+        return "--hardware-compatibility-level=" + "_".join(
+            part.capitalize() for part in enum_name.split("_")
+        )
+
+    fallback_flag = None
+
+    for prefix, min_major, max_major, min_minor, max_minor, fallback_cli in ordered_levels:
+        if major < min_major:
+            continue
+        if max_major is not None and major > max_major:
+            continue
+        if min_minor is not None and minor < min_minor:
+            continue
+        if max_minor is not None and minor > max_minor:
+            continue
+        if members:
+            candidates = [name for name in members if prefix in name]
+            if not candidates:
+                continue
+            candidates.sort(key=lambda name: (0 if name.endswith("PLUS") else 1, len(name)))
+            chosen = candidates[0]
+            return members[chosen], _cli_name(chosen)
+        fallback_flag = f"--hardware-compatibility-level={fallback_cli}"
+        break
+
+    return None, fallback_flag
 
     major, _ = torch.cuda.get_device_capability()
     members = _enum_members(trt.HardwareCompatibilityLevel)
