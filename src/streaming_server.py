@@ -1,22 +1,25 @@
 import asyncio
+import base64
 import json
 import logging
 import os
-import time
 import threading
-from typing import Dict, Any, Optional
-import base64
-import cv2
+import time
+from asyncio import QueueEmpty, QueueFull
+from typing import Any, Dict, Optional
+
+try:
+    import cv2
+except ImportError:  # pragma: no cover - optional during unit tests
+    cv2 = None
 import numpy as np
-from asyncio import QueueFull, QueueEmpty
-from streaming_protocol import build_binary_frame_payload
-
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File
-from fastapi.responses import HTMLResponse, JSONResponse
 import uvicorn
+from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse, JSONResponse
 
+from server_paths import resolve_data_root
 from stream_pipeline_online import StreamSDK
-
+from streaming_protocol import build_binary_frame_payload
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -93,7 +96,8 @@ class StreamingServer:
         
         @self.app.post("/upload")
         async def upload_files(audio: UploadFile | None = File(None), source: UploadFile | None = File(None)):
-            import uuid, pathlib
+            import pathlib
+            import uuid
             base_dir = pathlib.Path("/app/data/uploads")
             base_dir.mkdir(parents=True, exist_ok=True)
             resp = {}
@@ -575,8 +579,9 @@ class StreamingServer:
             
             # Load and process audio
             logger.info(f"About to load audio file: {audio_path}")
-            import librosa
             import math
+
+            import librosa
             
             audio, sr = librosa.core.load(audio_path, sr=16000)
             num_f = math.ceil(len(audio) / 16000 * 25)
@@ -716,6 +721,10 @@ class WebSocketFrameWriter:
         self.frame_count = 0
         
     def __call__(self, frame_rgb: np.ndarray, fmt: str = "rgb"):
+        if cv2 is None:
+            raise RuntimeError(
+                "OpenCV (opencv-python-headless) is required for frame encoding"
+            )
         # Convert to WebP bytes for binary WebSocket transmission
         if fmt == "rgb":
             # Convert RGB to BGR for OpenCV
@@ -771,8 +780,8 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(description="Ditto Streaming Server")
-    parser.add_argument("--data_root", type=str, default="../checkpoints/ditto_trt_Ampere_Plus/", 
-                      help="Path to TRT data_root")
+    parser.add_argument("--data_root", type=str, default=None,
+                      help="Path to TRT engine directory (defaults to auto-detect)")
     parser.add_argument("--cfg_pkl", type=str, default="../checkpoints/ditto_cfg/v0.4_hubert_cfg_trt_online.pkl",
                       help="Path to cfg_pkl")
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Host to bind to")
@@ -780,12 +789,19 @@ def main():
     
     args = parser.parse_args()
     
+    # Resolve TensorRT engine directory (auto-detect across GPU generations)
+    try:
+        data_root = resolve_data_root(args.data_root)
+    except FileNotFoundError as exc:
+        logger.error("%s", exc)
+        raise SystemExit(1) from exc
+
     # Initialize server
-    server = StreamingServer(args.cfg_pkl, args.data_root)
+    server = StreamingServer(args.cfg_pkl, data_root)
     
     # Run server
     logger.info(f"Starting Ditto Streaming Server on {args.host}:{args.port}")
-    logger.info(f"Using model: {args.data_root}")
+    logger.info(f"Using TensorRT engines in: {data_root}")
     logger.info(f"Using config: {args.cfg_pkl}")
     
     uvicorn.run(

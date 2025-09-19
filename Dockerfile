@@ -1,5 +1,5 @@
 # Use NVIDIA CUDA base image with Ubuntu
-FROM nvidia/cuda:11.8.0-devel-ubuntu22.04
+FROM nvidia/cuda:12.6.2-devel-ubuntu22.04
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
@@ -43,10 +43,10 @@ RUN apt-get update && apt-get install -y \
     libasound2-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install cuDNN
+# Install cuDNN (CUDA 12.x builds ship cuDNN 9)
 RUN apt-get update && apt-get install -y \
-    libcudnn8=8.9.7.29-1+cuda11.8 \
-    libcudnn8-dev=8.9.7.29-1+cuda11.8 \
+    libcudnn9 \
+    libcudnn9-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Set python3.10 as default python
@@ -61,12 +61,11 @@ RUN python -m pip install --upgrade pip
 ENV PIP_EXTRA_INDEX_URL=https://pypi.org/simple
 
 # Install PyTorch with CUDA support first
-RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
 
-# Install TensorRT and other dependencies
-# Note: keep explicit extra index here as well for clarity, though ENV covers sub-installs
+# Install TensorRT-RTX and runtime dependencies
 RUN pip install --extra-index-url https://pypi.org/simple \
-    tensorrt==8.6.1 \
+    "tensorrt-cu12[rtx]>=10.8.0,<11.0.0" \
     librosa \
     tqdm \
     filetype \
@@ -74,11 +73,11 @@ RUN pip install --extra-index-url https://pypi.org/simple \
     opencv-python-headless \
     scikit-image \
     cython \
-    cuda-python==12.6.* \
+    'cuda-python==12.6.*' \
     imageio-ffmpeg \
     colored \
     polygraphy \
-    numpy==2.0.1 \
+    numpy==2.1.1 \
     fastapi \
     uvicorn[standard] \
     websockets \

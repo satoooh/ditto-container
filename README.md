@@ -4,7 +4,7 @@ TensorRT 版 Ditto Talking Head を GPU 対応 Docker コンテナで再現し�
 
 ---
 ## 1. 前提条件
-- NVIDIA GPU（Ampere 世代以上推奨）と対応ドライバ
+- NVIDIA GPU（Ampere 世代以上推奨）と R560 以降のホストドライバ（CUDA 12.6 対応）
 - Docker / Docker Compose v2（v1 でも可）
 - NVIDIA Container Toolkit（`nvidia-container-toolkit`）
 - モデルチェックポイント（Hugging Face: `digital-avatar/ditto-talkinghead`）
@@ -24,8 +24,9 @@ git lfs install
 git clone https://huggingface.co/digital-avatar/ditto-talkinghead checkpoints
 ```
 - ストリーミング用設定: `checkpoints/ditto_cfg/v0.4_hubert_cfg_trt_online.pkl`
-- Ampere+ 向け TensorRT エンジン: `checkpoints/ditto_trt_Ampere_Plus/`
-- 異なる GPU を利用する場合は `python src/scripts/cvt_onnx_to_trt.py` で再生成
+- TensorRT エンジン (Ampere〜Blackwell 共有): `checkpoints/ditto_trt_universal/`
+- 旧エンジン (`checkpoints/ditto_trt_Ampere_Plus/`) は後方互換用に残しておけます
+- 新しい GPU で利用する際は `python src/scripts/cvt_onnx_to_trt.py --onnx_dir <チェックポイントの onnx> --trt_dir /app/checkpoints/ditto_trt_universal` で再生成
 
 ### 2-3. コンテナのビルドと起動
 ```bash
@@ -33,6 +34,7 @@ git clone https://huggingface.co/digital-avatar/ditto-talkinghead checkpoints
 ```
 `./setup.sh` は以下を実行します。
 - `checkpoints/`,`data/`,`output/` の作成
+- CUDA 12.6 + TensorRT-RTX 10.x ベースのイメージをビルド
 - Docker Compose v2 → v1 → plain docker の順に起動を試行
 - fallback 時は `bash -lc 'sleep infinity'` でコンテナ終了を防止
 
@@ -41,6 +43,17 @@ git clone https://huggingface.co/digital-avatar/ditto-talkinghead checkpoints
 ./setup.sh build   # docker build / docker compose build
 ./setup.sh run     # docker compose up -d （fallback: docker run）
 ```
+
+### 2-4. TensorRT エンジンを再生成する
+TensorRT-RTX 10.x は Ampere〜Blackwell まで 1 つのエンジンで共有できます。新しい GPU を追加したら、以下の手順で universal ディレクトリを更新してください。
+```bash
+# コンテナ内 (/app) で実行
+python src/scripts/cvt_onnx_to_trt.py \
+  --onnx_dir /app/checkpoints/ditto_trt_onnx \
+  --trt_dir /app/checkpoints/ditto_trt_universal
+```
+- `--trt_dir` は任意ですが、`ditto_trt_universal/` を推奨（既存 Ampere エンジンと共存させる）
+- 生成された `.engine` は `streaming_server.py` が自動選択します
 
 ---
 ## 3. コンテナ内での推論
@@ -53,7 +66,7 @@ git clone https://huggingface.co/digital-avatar/ditto-talkinghead checkpoints
    ```bash
    cd /app/src
    python inference.py \
-     --data_root "/app/checkpoints/ditto_trt_Ampere_Plus" \
+     --data_root "/app/checkpoints/ditto_trt_universal" \
      --cfg_pkl "/app/checkpoints/ditto_cfg/v0.4_hubert_cfg_trt.pkl" \
      --audio_path "/app/data/audio.wav" \
      --source_path "/app/data/source_image.png" \
@@ -68,10 +81,10 @@ git clone https://huggingface.co/digital-avatar/ditto-talkinghead checkpoints
 cd /app/src
 python streaming_server.py \
   --host 0.0.0.0 --port 8000 \
-  --cfg_pkl "/app/checkpoints/ditto_cfg/v0.4_hubert_cfg_trt_online.pkl" \
-  --data_root "/app/checkpoints/ditto_trt_Ampere_Plus"
+  --cfg_pkl "/app/checkpoints/ditto_cfg/v0.4_hubert_cfg_trt_online.pkl"
 ```
 - FastAPI + WebSocket によるリアルタイム配信
+- `--data_root` を省略すると `checkpoints/ditto_trt_universal/` → `checkpoints/ditto_trt_Ampere_Plus/` の順で自動解決
 - 起動時に TensorRT / StreamSDK をプリウォーム
 - フレームはヘッダ `!IdI` + WebP のバイナリ WebSocket で送信
 - キュー深度に応じて WebP 品質を 85/75/60 に自動調整

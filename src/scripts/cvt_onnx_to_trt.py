@@ -17,6 +17,7 @@ def onnx_to_trt(onnx_file, trt_file, fp16=False, more_cmd=None):
         trt_file,
         compatiable,
         "--fp16" if fp16 else "",
+        "--version-compatible",
         f"--builder-optimization-level=5",
     ]
     if more_cmd:
@@ -70,6 +71,11 @@ def onnx_to_trt_for_gridsample(onnx_file, trt_file, fp16=False, plugin_file="./l
         config.hardware_compatibility_level = (
             trt.HardwareCompatibilityLevel.AMPERE_PLUS
         )
+
+    try:
+        config.set_flag(trt.BuilderFlag.VERSION_COMPATIBLE)
+    except AttributeError:
+        pass
 
     if fp16:
         config.set_flag(trt.BuilderFlag.FP16)
