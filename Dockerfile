@@ -42,12 +42,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN python -m pip install --upgrade pip
 
-RUN python -m pip uninstall -y tensorrt tensorrt_dispatch tensorrt-lean tensorrt-lean-libs tensorrt-lean-libnvinfer || true
-RUN ls /usr/lib/python*/dist-packages/tensorrt/python/ && \
-    python -m pip install \
-      /usr/lib/python*/dist-packages/tensorrt/python/tensorrt-*-cp*.whl \
-      /usr/lib/python*/dist-packages/tensorrt/python/tensorrt_dispatch-*-cp*.whl || \
-    (echo "TensorRT Python wheel not found" && exit 1)
+RUN pip install --no-cache-dir --extra-index-url https://pypi.nvidia.com "tensorrt==10.13.3.9"
 
 ENV PIP_EXTRA_INDEX_URL=https://pypi.org/simple
 

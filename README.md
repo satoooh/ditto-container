@@ -7,7 +7,7 @@ TensorRT 版 Ditto Talking Head を GPU 対応 Docker コンテナで再現し�
 - NVIDIA GPU（Ampere 〜 Blackwell 世代）と R575.51 以降のホストドライバ（CUDA 12.9 対応）
 - Docker / Docker Compose v2（v1 でも可）
 - NVIDIA Container Toolkit（`nvidia-container-toolkit`）
-- NVIDIA NGC アカウントと `docker login nvcr.io` が可能な資格情報
+- NVIDIA NGC アカウントと `docker login nvcr.io` が可能な資格情報（TensorRT 10.13.3 の Python ホイール取得に利用）
 - モデルチェックポイント（Hugging Face: `digital-avatar/ditto-talkinghead`）
 
 ---
@@ -42,7 +42,7 @@ sudo docker login nvcr.io
 ```
 `./setup.sh` は以下を実行します。
 - `checkpoints/`,`data/`,`output/` の作成
-- NGC ベースの `nvcr.io/nvidia/tensorrt:25.08-py3` を元に CUDA 12.9 + TensorRT Python 10.x ホイールをセットアップ
+- NGC ベースの `nvcr.io/nvidia/tensorrt:25.08-py3` を元に CUDA 12.9 + TensorRT 10.13.3 をセットアップ（`pip install --extra-index-url https://pypi.nvidia.com tensorrt==10.13.3.9`）
 - Docker Compose v2 → v1 → plain docker の順に起動を試行
 - fallback 時は `bash -lc 'sleep infinity'` でコンテナ終了を防止
 
@@ -59,6 +59,7 @@ TensorRT 10.x (Python バインディング 10 系) は Ampere〜Blackwell ま�
 python - <<'PY'
 import tensorrt as trt
 print('TensorRT Python version:', trt.__version__)
+assert trt.__version__.startswith('10.13'), trt.__version__
 PY
 
 python src/scripts/cvt_onnx_to_trt.py \
