@@ -7,14 +7,24 @@ import os
 try:
     import tensorrt as trt
 except ImportError:
+    import glob
     import tensorrt_libs
 
     trt_libs_path = tensorrt_libs.__path__[0]
-    ctypes.CDLL(os.path.join(trt_libs_path, "libnvinfer.so.8"))
-    ctypes.CDLL(os.path.join(trt_libs_path, "libnvinfer_plugin.so.8"))
-    ctypes.CDLL(os.path.join(trt_libs_path, "libnvonnxparser.so.8"))
-    ctypes.CDLL(os.path.join(trt_libs_path, "libnvparsers.so.8"))
-    ctypes.CDLL(os.path.join(trt_libs_path, "libnvinfer_builder_resource.so.8.6.1"))
+    for base in (
+        "libnvinfer.so",
+        "libnvinfer_plugin.so",
+        "libnvonnxparser.so",
+        "libnvparsers.so",
+        "libnvinfer_builder_resource.so",
+    ):
+        candidates = sorted(
+            glob.glob(os.path.join(trt_libs_path, f"{base}*")),
+            reverse=True,
+        )
+        if not candidates:
+            continue
+        ctypes.CDLL(candidates[0])
     import tensorrt as trt
 
 logger = trt.Logger(trt.Logger.ERROR)

@@ -42,7 +42,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN python -m pip install --upgrade pip
 
-RUN pip install --no-cache-dir --extra-index-url https://pypi.nvidia.com "tensorrt==10.13.3.9"
+ENV PIP_INDEX_URL=https://pypi.nvidia.com
+
+RUN pip install --no-cache-dir "tensorrt==10.13.3.9" "tensorrt-cu13==10.13.3.9" "tensorrt-cu13-bindings==10.13.3.9" "tensorrt-cu13-libs==10.13.3.9"
 
 ENV PIP_EXTRA_INDEX_URL=https://pypi.org/simple
 
@@ -66,6 +68,12 @@ RUN pip install --extra-index-url https://pypi.org/simple \
     websockets \
     python-multipart \
     pyaudio
+
+RUN python - <<'PY'
+import tensorrt as trt
+print('Verified TensorRT version:', trt.__version__)
+assert trt.__version__.startswith('10.13'), trt.__version__
+PY
 
 WORKDIR /app
 
