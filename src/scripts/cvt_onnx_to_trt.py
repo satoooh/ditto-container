@@ -3,11 +3,56 @@ import argparse
 import torch
 
 
+def _enum_members(enum_obj):
+    if hasattr(enum_obj, "__members__") and enum_obj.__members__:
+        return dict(enum_obj.__members__)
+
+    members = {}
+    for attr in dir(enum_obj):
+        if not attr or not attr[0].isupper():
+            continue
+        try:
+            members[attr] = getattr(enum_obj, attr)
+        except AttributeError:
+            continue
+    return members
+
+
 def _resolve_hardware_compatibility():
     try:
         import tensorrt as trt  # type: ignore
     except ImportError:
         return None, None
+
+    major, _ = torch.cuda.get_device_capability()
+    members = _enum_members(trt.HardwareCompatibilityLevel)
+    if not members:
+        return None, None
+
+    ordered_prefixes = [
+        ("BLACKWELL", 12, None),
+        ("HOPPER", 9, 11),
+        ("ADA", 8, 8),
+        ("AMPERE", 8, 8),
+    ]
+
+    def _cli_name(enum_name: str) -> str:
+        return "--hardware-compatibility-level=" + "_".join(
+            part.capitalize() for part in enum_name.split("_")
+        )
+
+    for prefix, min_major, max_major in ordered_prefixes:
+        if major < min_major:
+            continue
+        if max_major is not None and major > max_major:
+            continue
+        candidates = [name for name in members if prefix in name]
+        if not candidates:
+            continue
+        candidates.sort(key=lambda name: (0 if name.endswith("PLUS") else 1, len(name)))
+        chosen = candidates[0]
+        return members[chosen], _cli_name(chosen)
+    return None, None
 
     major, _ = torch.cuda.get_device_capability()
     available = {level.name: level for level in trt.HardwareCompatibilityLevel}
