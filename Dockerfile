@@ -65,9 +65,8 @@ RUN pip install torch torchvision torchaudio --index-url https://download.pytorc
 
 # Install TensorRT-RTX and runtime dependencies
 RUN pip install --extra-index-url https://pypi.org/simple \
-    "tensorrt-cu12[rtx]>=10.13.0,<10.14.0" \
-    "tensorrt-cu12-libs>=10.13.0,<10.14.0" \
-    "tensorrt-bindings-cu12>=10.13.0,<10.14.0" \
+    "tensorrt-cu12[rtx]==10.13.3.9" \
+    "tensorrt-cu12-libs==10.13.3.9" \
     librosa \
     tqdm \
     filetype \
