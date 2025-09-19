@@ -71,7 +71,8 @@ RUN git lfs install
 
 COPY src/ /app/src/
 
-RUN useradd -m -u 1000 user && chown -R user:user /app
-USER user
+RUN if ! getent passwd 1000 >/dev/null; then useradd -m -u 1000 user; fi \
+    && chown -R 1000:1000 /app
+USER 1000
 
 CMD ["/bin/bash"]
