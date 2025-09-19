@@ -44,9 +44,9 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install cuDNN (CUDA 12.x builds ship cuDNN 9)
-RUN apt-get update && apt-get install -y \
-    libcudnn9 \
-    libcudnn9-dev \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libcudnn9-cuda-12 \
+    libcudnn9-dev-cuda-12 \
     && rm -rf /var/lib/apt/lists/*
 
 # Set python3.10 as default python
