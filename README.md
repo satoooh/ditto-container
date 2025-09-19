@@ -24,9 +24,9 @@ git lfs install
 git clone https://huggingface.co/digital-avatar/ditto-talkinghead checkpoints
 ```
 - ストリーミング用設定: `checkpoints/ditto_cfg/v0.4_hubert_cfg_trt_online.pkl`
-- TensorRT エンジン (Ampere〜Blackwell 共有): `checkpoints/ditto_trt_universal/`
-- 旧エンジン (`checkpoints/ditto_trt_Ampere_Plus/`) は後方互換用に残しておけます
-- 新しい GPU で利用する際は `python src/scripts/cvt_onnx_to_trt.py --onnx_dir /app/checkpoints/ditto_onnx --trt_dir /app/checkpoints/ditto_trt_universal` で再生成
+- Ampere/Ada 向け TensorRT エンジン: `checkpoints/ditto_trt_Ampere_Plus/`
+- RTX 5090 など Blackwell 向けエンジン: `checkpoints/ditto_trt_blackwell/`
+- 新しい GPU で利用する際は `python src/scripts/cvt_onnx_to_trt.py --onnx_dir /app/checkpoints/ditto_onnx --trt_dir /app/checkpoints/ditto_trt_blackwell` で再生成
 
 ### 2-3. コンテナのビルドと起動
 ```bash
@@ -50,10 +50,11 @@ TensorRT-RTX 10.x は Ampere〜Blackwell まで 1 つのエンジンで共有で
 # コンテナ内 (/app) で実行
 python src/scripts/cvt_onnx_to_trt.py \
   --onnx_dir /app/checkpoints/ditto_onnx \
-  --trt_dir /app/checkpoints/ditto_trt_universal
+  --trt_dir /app/checkpoints/ditto_trt_blackwell
 ```
 - `--onnx_dir` には Hugging Face 配布の `checkpoints/ditto_onnx/` を指定（パス名が異なる場合はシンボリックリンクを作るか引数を調整）
-- `--trt_dir` は任意ですが、`ditto_trt_universal/` を推奨（既存 Ampere エンジンと共存させる）
+- GPU の Compute Capability から Ampere/Ada/Blackwell 向けハードウェア互換レベルを自動選択します（RTX 5090 では `Blackwell_Plus`）
+- `--trt_dir` は任意ですが、`ditto_trt_blackwell/` を推奨（既存 Ampere エンジンと共存させる）
 - 生成された `.engine` は `streaming_server.py` が自動選択します
 
 ---
@@ -67,7 +68,7 @@ python src/scripts/cvt_onnx_to_trt.py \
    ```bash
    cd /app/src
    python inference.py \
-     --data_root "/app/checkpoints/ditto_trt_universal" \
+     --data_root "/app/checkpoints/ditto_trt_blackwell" \
      --cfg_pkl "/app/checkpoints/ditto_cfg/v0.4_hubert_cfg_trt.pkl" \
      --audio_path "/app/data/audio.wav" \
      --source_path "/app/data/source_image.png" \
@@ -85,7 +86,7 @@ python streaming_server.py \
   --cfg_pkl "/app/checkpoints/ditto_cfg/v0.4_hubert_cfg_trt_online.pkl"
 ```
 - FastAPI + WebSocket によるリアルタイム配信
-- `--data_root` を省略すると `checkpoints/ditto_trt_universal/` → `checkpoints/ditto_trt_Ampere_Plus/` の順で自動解決
+- `--data_root` を省略すると GPU の世代に応じて `checkpoints/ditto_trt_blackwell/`（Blackwell）→ `checkpoints/ditto_trt_Ampere_Plus/`（Ampere/Ada）を自動で選択
 - 起動時に TensorRT / StreamSDK をプリウォーム
 - フレームはヘッダ `!IdI` + WebP のバイナリ WebSocket で送信
 - キュー深度に応じて WebP 品質を 85/75/60 に自動調整

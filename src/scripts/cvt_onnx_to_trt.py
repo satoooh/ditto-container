@@ -1,27 +1,58 @@
 import os
-import torch
 import argparse
+import torch
+
+
+def _resolve_hardware_compatibility():
+    try:
+        import tensorrt as trt  # type: ignore
+    except ImportError:
+        return None, None
+
+    major, _ = torch.cuda.get_device_capability()
+    available = {level.name: level for level in trt.HardwareCompatibilityLevel}
+    ordered_prefixes = [
+        ("BLACKWELL", 12, None),
+        ("HOPPER", 9, 11),
+        ("ADA", 8, 8),
+        ("AMPERE", 8, 8),
+    ]
+
+    def _cli_name(enum_name: str) -> str:
+        return "--hardware-compatibility-level=" + "_".join(
+            part.capitalize() for part in enum_name.split("_")
+        )
+
+    for prefix, min_major, max_major in ordered_prefixes:
+        if major < min_major:
+            continue
+        if max_major is not None and major > max_major:
+            continue
+        candidates = [name for name in available if prefix in name]
+        if not candidates:
+            continue
+        candidates.sort(key=lambda name: (0 if name.endswith("PLUS") else 1, len(name)))
+        chosen = candidates[0]
+        return available[chosen], _cli_name(chosen)
+    return None, None
 
 
 def onnx_to_trt(onnx_file, trt_file, fp16=False, more_cmd=None):
-    cap = torch.cuda.get_device_capability()
-    if cap[0] >= 8:
-        compatiable = "--hardware-compatibility-level=Ampere_Plus"
-    else:
-        compatiable = ""
+    _, compat_flag = _resolve_hardware_compatibility()
     cmd = [
         "polygraphy",
         "convert",
         onnx_file,
         "-o",
         trt_file,
-        compatiable,
         "--fp16" if fp16 else "",
         "--version-compatible",
         "--onnx-flags",
         "NATIVE_INSTANCENORM",
         "--builder-optimization-level=5",
     ]
+    if compat_flag:
+        cmd.insert(5, compat_flag)
     if more_cmd:
         cmd.extend(more_cmd)
     cmd = [arg for arg in cmd if arg]
@@ -65,15 +96,10 @@ def onnx_to_trt_for_gridsample(
     config = builder.create_builder_config()
     # config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, 1 << 32)
     config.builder_optimization_level = 5
-    # Set the flag of hardware compatibility, Hardware-compatible engines are only supported on Ampere and beyond
-    cap = torch.cuda.get_device_capability()
-    if cap[0] >= 8:
-        compatible = True
-    else:
-        compatible = False
-
-    if compatible:
-        config.hardware_compatibility_level = trt.HardwareCompatibilityLevel.AMPERE_PLUS
+    # Set the flag of hardware compatibility, handled dynamically based on GPU capability
+    level_enum, _ = _resolve_hardware_compatibility()
+    if level_enum is not None:
+        config.hardware_compatibility_level = level_enum
 
     try:
         config.set_flag(trt.BuilderFlag.VERSION_COMPATIBLE)
