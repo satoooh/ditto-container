@@ -18,10 +18,13 @@ def onnx_to_trt(onnx_file, trt_file, fp16=False, more_cmd=None):
         compatiable,
         "--fp16" if fp16 else "",
         "--version-compatible",
+        "--onnx-flags",
+        "NATIVE_INSTANCENORM",
         "--builder-optimization-level=5",
     ]
     if more_cmd:
-        cmd = cmd + more_cmd
+        cmd.extend(more_cmd)
+    cmd = [arg for arg in cmd if arg]
     print(" ".join(cmd))
     os.system(" ".join(cmd))
 

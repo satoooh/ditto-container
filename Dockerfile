@@ -1,5 +1,5 @@
 # Use NVIDIA CUDA base image with Ubuntu
-FROM nvidia/cuda:12.6.2-devel-ubuntu22.04
+FROM nvidia/cuda:12.9.0-devel-ubuntu22.04
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
@@ -61,11 +61,11 @@ RUN python -m pip install --upgrade pip
 ENV PIP_EXTRA_INDEX_URL=https://pypi.org/simple
 
 # Install PyTorch with CUDA support first
-RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
 
 # Install TensorRT-RTX and runtime dependencies
 RUN pip install --extra-index-url https://pypi.org/simple \
-    "tensorrt-cu12[rtx]>=10.8.0,<11.0.0" \
+    "tensorrt-cu12[rtx]>=10.12.0,<11.0.0" \
     librosa \
     tqdm \
     filetype \
@@ -73,7 +73,7 @@ RUN pip install --extra-index-url https://pypi.org/simple \
     opencv-python-headless \
     scikit-image \
     cython \
-    'cuda-python==12.6.*' \
+    'cuda-python==12.9.*' \
     imageio-ffmpeg \
     colored \
     polygraphy \
