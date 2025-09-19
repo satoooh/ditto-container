@@ -14,6 +14,7 @@ import warnings
 import collections.abc
 from itertools import repeat
 
+
 def kp2gaussian(kp, spatial_size, kp_variance):
     """
     Transform a keypoint into gaussian like representation
@@ -31,9 +32,9 @@ def kp2gaussian(kp, spatial_size, kp_variance):
     shape = mean.shape[:number_of_leading_dimensions] + (1, 1, 1, 3)
     mean = mean.view(*shape)
 
-    mean_sub = (coordinate_grid - mean)
+    mean_sub = coordinate_grid - mean
 
-    out = torch.exp(-0.5 * (mean_sub ** 2).sum(-1) / kp_variance)
+    out = torch.exp(-0.5 * (mean_sub**2).sum(-1) / kp_variance)
 
     return out
 
@@ -45,9 +46,9 @@ def make_coordinate_grid(spatial_size, ref, **kwargs):
     z = torch.arange(d).type(ref.dtype).to(ref.device)
 
     # NOTE: must be right-down-in
-    x = (2 * (x / (w - 1)) - 1)  # the x axis faces to the right
-    y = (2 * (y / (h - 1)) - 1)  # the y axis faces to the bottom
-    z = (2 * (z / (d - 1)) - 1)  # the z axis faces to the inner
+    x = 2 * (x / (w - 1)) - 1  # the x axis faces to the right
+    y = 2 * (y / (h - 1)) - 1  # the y axis faces to the bottom
+    z = 2 * (z / (d - 1)) - 1  # the z axis faces to the inner
 
     yy = y.view(1, -1, 1).repeat(d, 1, w)
     xx = x.view(1, 1, -1).repeat(d, h, 1)
@@ -63,11 +64,25 @@ class ConvT2d(nn.Module):
     Upsampling block for use in decoder.
     """
 
-    def __init__(self, in_features, out_features, kernel_size=3, stride=2, padding=1, output_padding=1):
+    def __init__(
+        self,
+        in_features,
+        out_features,
+        kernel_size=3,
+        stride=2,
+        padding=1,
+        output_padding=1,
+    ):
         super(ConvT2d, self).__init__()
 
-        self.convT = nn.ConvTranspose2d(in_features, out_features, kernel_size=kernel_size, stride=stride,
-                                        padding=padding, output_padding=output_padding)
+        self.convT = nn.ConvTranspose2d(
+            in_features,
+            out_features,
+            kernel_size=kernel_size,
+            stride=stride,
+            padding=padding,
+            output_padding=output_padding,
+        )
         self.norm = nn.InstanceNorm2d(out_features)
 
     def forward(self, x):
@@ -84,8 +99,18 @@ class ResBlock3d(nn.Module):
 
     def __init__(self, in_features, kernel_size, padding):
         super(ResBlock3d, self).__init__()
-        self.conv1 = nn.Conv3d(in_channels=in_features, out_channels=in_features, kernel_size=kernel_size, padding=padding)
-        self.conv2 = nn.Conv3d(in_channels=in_features, out_channels=in_features, kernel_size=kernel_size, padding=padding)
+        self.conv1 = nn.Conv3d(
+            in_channels=in_features,
+            out_channels=in_features,
+            kernel_size=kernel_size,
+            padding=padding,
+        )
+        self.conv2 = nn.Conv3d(
+            in_channels=in_features,
+            out_channels=in_features,
+            kernel_size=kernel_size,
+            padding=padding,
+        )
         self.norm1 = nn.BatchNorm3d(in_features, affine=True)
         self.norm2 = nn.BatchNorm3d(in_features, affine=True)
 
@@ -108,8 +133,13 @@ class UpBlock3d(nn.Module):
     def __init__(self, in_features, out_features, kernel_size=3, padding=1, groups=1):
         super(UpBlock3d, self).__init__()
 
-        self.conv = nn.Conv3d(in_channels=in_features, out_channels=out_features, kernel_size=kernel_size,
-                              padding=padding, groups=groups)
+        self.conv = nn.Conv3d(
+            in_channels=in_features,
+            out_channels=out_features,
+            kernel_size=kernel_size,
+            padding=padding,
+            groups=groups,
+        )
         self.norm = nn.BatchNorm3d(out_features, affine=True)
 
     def forward(self, x):
@@ -127,7 +157,13 @@ class DownBlock2d(nn.Module):
 
     def __init__(self, in_features, out_features, kernel_size=3, padding=1, groups=1):
         super(DownBlock2d, self).__init__()
-        self.conv = nn.Conv2d(in_channels=in_features, out_channels=out_features, kernel_size=kernel_size, padding=padding, groups=groups)
+        self.conv = nn.Conv2d(
+            in_channels=in_features,
+            out_channels=out_features,
+            kernel_size=kernel_size,
+            padding=padding,
+            groups=groups,
+        )
         self.norm = nn.BatchNorm2d(out_features, affine=True)
         self.pool = nn.AvgPool2d(kernel_size=(2, 2))
 
@@ -146,12 +182,17 @@ class DownBlock3d(nn.Module):
 
     def __init__(self, in_features, out_features, kernel_size=3, padding=1, groups=1):
         super(DownBlock3d, self).__init__()
-        '''
+        """
         self.conv = nn.Conv3d(in_channels=in_features, out_channels=out_features, kernel_size=kernel_size,
                                 padding=padding, groups=groups, stride=(1, 2, 2))
-        '''
-        self.conv = nn.Conv3d(in_channels=in_features, out_channels=out_features, kernel_size=kernel_size,
-                              padding=padding, groups=groups)
+        """
+        self.conv = nn.Conv3d(
+            in_channels=in_features,
+            out_channels=out_features,
+            kernel_size=kernel_size,
+            padding=padding,
+            groups=groups,
+        )
         self.norm = nn.BatchNorm3d(out_features, affine=True)
         self.pool = nn.AvgPool3d(kernel_size=(1, 2, 2))
 
@@ -168,9 +209,17 @@ class SameBlock2d(nn.Module):
     Simple block, preserve spatial resolution.
     """
 
-    def __init__(self, in_features, out_features, groups=1, kernel_size=3, padding=1, lrelu=False):
+    def __init__(
+        self, in_features, out_features, groups=1, kernel_size=3, padding=1, lrelu=False
+    ):
         super(SameBlock2d, self).__init__()
-        self.conv = nn.Conv2d(in_channels=in_features, out_channels=out_features, kernel_size=kernel_size, padding=padding, groups=groups)
+        self.conv = nn.Conv2d(
+            in_channels=in_features,
+            out_channels=out_features,
+            kernel_size=kernel_size,
+            padding=padding,
+            groups=groups,
+        )
         self.norm = nn.BatchNorm2d(out_features, affine=True)
         if lrelu:
             self.ac = nn.LeakyReLU()
@@ -194,7 +243,16 @@ class Encoder(nn.Module):
 
         down_blocks = []
         for i in range(num_blocks):
-            down_blocks.append(DownBlock3d(in_features if i == 0 else min(max_features, block_expansion * (2 ** i)), min(max_features, block_expansion * (2 ** (i + 1))), kernel_size=3, padding=1))
+            down_blocks.append(
+                DownBlock3d(
+                    in_features
+                    if i == 0
+                    else min(max_features, block_expansion * (2**i)),
+                    min(max_features, block_expansion * (2 ** (i + 1))),
+                    kernel_size=3,
+                    padding=1,
+                )
+            )
         self.down_blocks = nn.ModuleList(down_blocks)
 
     def forward(self, x):
@@ -215,14 +273,23 @@ class Decoder(nn.Module):
         up_blocks = []
 
         for i in range(num_blocks)[::-1]:
-            in_filters = (1 if i == num_blocks - 1 else 2) * min(max_features, block_expansion * (2 ** (i + 1)))
-            out_filters = min(max_features, block_expansion * (2 ** i))
-            up_blocks.append(UpBlock3d(in_filters, out_filters, kernel_size=3, padding=1))
+            in_filters = (1 if i == num_blocks - 1 else 2) * min(
+                max_features, block_expansion * (2 ** (i + 1))
+            )
+            out_filters = min(max_features, block_expansion * (2**i))
+            up_blocks.append(
+                UpBlock3d(in_filters, out_filters, kernel_size=3, padding=1)
+            )
 
         self.up_blocks = nn.ModuleList(up_blocks)
         self.out_filters = block_expansion + in_features
 
-        self.conv = nn.Conv3d(in_channels=self.out_filters, out_channels=self.out_filters, kernel_size=3, padding=1)
+        self.conv = nn.Conv3d(
+            in_channels=self.out_filters,
+            out_channels=self.out_filters,
+            kernel_size=3,
+            padding=1,
+        )
         self.norm = nn.BatchNorm3d(self.out_filters, affine=True)
 
     def forward(self, x):
@@ -260,14 +327,14 @@ class SPADE(nn.Module):
         nhidden = 128
 
         self.mlp_shared = nn.Sequential(
-            nn.Conv2d(label_nc, nhidden, kernel_size=3, padding=1),
-            nn.ReLU())
+            nn.Conv2d(label_nc, nhidden, kernel_size=3, padding=1), nn.ReLU()
+        )
         self.mlp_gamma = nn.Conv2d(nhidden, norm_nc, kernel_size=3, padding=1)
         self.mlp_beta = nn.Conv2d(nhidden, norm_nc, kernel_size=3, padding=1)
 
     def forward(self, x, segmap):
         normalized = self.param_free_norm(x)
-        segmap = F.interpolate(segmap, size=x.size()[2:], mode='nearest')
+        segmap = F.interpolate(segmap, size=x.size()[2:], mode="nearest")
         actv = self.mlp_shared(segmap)
         gamma = self.mlp_gamma(actv)
         beta = self.mlp_beta(actv)
@@ -279,16 +346,20 @@ class SPADEResnetBlock(nn.Module):
     def __init__(self, fin, fout, norm_G, label_nc, use_se=False, dilation=1):
         super().__init__()
         # Attributes
-        self.learned_shortcut = (fin != fout)
+        self.learned_shortcut = fin != fout
         fmiddle = min(fin, fout)
         self.use_se = use_se
         # create conv layers
-        self.conv_0 = nn.Conv2d(fin, fmiddle, kernel_size=3, padding=dilation, dilation=dilation)
-        self.conv_1 = nn.Conv2d(fmiddle, fout, kernel_size=3, padding=dilation, dilation=dilation)
+        self.conv_0 = nn.Conv2d(
+            fin, fmiddle, kernel_size=3, padding=dilation, dilation=dilation
+        )
+        self.conv_1 = nn.Conv2d(
+            fmiddle, fout, kernel_size=3, padding=dilation, dilation=dilation
+        )
         if self.learned_shortcut:
             self.conv_s = nn.Conv2d(fin, fout, kernel_size=1, bias=False)
         # apply spectral norm if specified
-        if 'spectral' in norm_G:
+        if "spectral" in norm_G:
             self.conv_0 = spectral_norm(self.conv_0)
             self.conv_1 = spectral_norm(self.conv_1)
             if self.learned_shortcut:
@@ -317,7 +388,7 @@ class SPADEResnetBlock(nn.Module):
         return F.leaky_relu(x, 2e-1)
 
 
-def filter_state_dict(state_dict, remove_name='fc'):
+def filter_state_dict(state_dict, remove_name="fc"):
     new_state_dict = {}
     for key in state_dict:
         if remove_name in key:
@@ -327,8 +398,7 @@ def filter_state_dict(state_dict, remove_name='fc'):
 
 
 class GRN(nn.Module):
-    """ GRN (Global Response Normalization) layer
-    """
+    """GRN (Global Response Normalization) layer"""
 
     def __init__(self, dim):
         super().__init__()
@@ -342,7 +412,7 @@ class GRN(nn.Module):
 
 
 class LayerNorm(nn.Module):
-    r""" LayerNorm that supports two data formats: channels_last (default) or channels_first.
+    r"""LayerNorm that supports two data formats: channels_last (default) or channels_first.
     The ordering of the dimensions in the inputs. channels_last corresponds to inputs with
     shape (batch_size, height, width, channels) while channels_first corresponds to inputs
     with shape (batch_size, channels, height, width).
@@ -356,11 +426,13 @@ class LayerNorm(nn.Module):
         self.data_format = data_format
         if self.data_format not in ["channels_last", "channels_first"]:
             raise NotImplementedError
-        self.normalized_shape = (normalized_shape, )
+        self.normalized_shape = (normalized_shape,)
 
     def forward(self, x):
         if self.data_format == "channels_last":
-            return F.layer_norm(x, self.normalized_shape, self.weight, self.bias, self.eps)
+            return F.layer_norm(
+                x, self.normalized_shape, self.weight, self.bias, self.eps
+            )
         elif self.data_format == "channels_first":
             u = x.mean(1, keepdim=True)
             s = (x - u).pow(2).mean(1, keepdim=True)
@@ -374,12 +446,14 @@ def _no_grad_trunc_normal_(tensor, mean, std, a, b):
     # Method based on https://people.sc.fsu.edu/~jburkardt/presentations/truncated_normal.pdf
     def norm_cdf(x):
         # Computes standard normal cumulative distribution function
-        return (1. + math.erf(x / math.sqrt(2.))) / 2.
+        return (1.0 + math.erf(x / math.sqrt(2.0))) / 2.0
 
     if (mean < a - 2 * std) or (mean > b + 2 * std):
-        warnings.warn("mean is more than 2 std from [a, b] in nn.init.trunc_normal_. "
-                      "The distribution of values may be incorrect.",
-                      stacklevel=2)
+        warnings.warn(
+            "mean is more than 2 std from [a, b] in nn.init.trunc_normal_. "
+            "The distribution of values may be incorrect.",
+            stacklevel=2,
+        )
 
     with torch.no_grad():
         # Values are generated by using a truncated uniform distribution and
@@ -397,7 +471,7 @@ def _no_grad_trunc_normal_(tensor, mean, std, a, b):
         tensor.erfinv_()
 
         # Transform to proper mean, std
-        tensor.mul_(std * math.sqrt(2.))
+        tensor.mul_(std * math.sqrt(2.0))
         tensor.add_(mean)
 
         # Clamp to ensure it's in the proper range
@@ -405,8 +479,8 @@ def _no_grad_trunc_normal_(tensor, mean, std, a, b):
         return tensor
 
 
-def drop_path(x, drop_prob=0., training=False, scale_by_keep=True):
-    """ Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks).
+def drop_path(x, drop_prob=0.0, training=False, scale_by_keep=True):
+    """Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks).
 
     This is the same as the DropConnect impl I created for EfficientNet, etc networks, however,
     the original name is misleading as 'Drop Connect' is a different form of dropout in a separate paper...
@@ -415,10 +489,12 @@ def drop_path(x, drop_prob=0., training=False, scale_by_keep=True):
     'survival rate' as the argument.
 
     """
-    if drop_prob == 0. or not training:
+    if drop_prob == 0.0 or not training:
         return x
     keep_prob = 1 - drop_prob
-    shape = (x.shape[0],) + (1,) * (x.ndim - 1)  # work with diff dim tensors, not just 2D ConvNets
+    shape = (x.shape[0],) + (1,) * (
+        x.ndim - 1
+    )  # work with diff dim tensors, not just 2D ConvNets
     random_tensor = x.new_empty(shape).bernoulli_(keep_prob)
     if keep_prob > 0.0 and scale_by_keep:
         random_tensor.div_(keep_prob)
@@ -426,8 +502,7 @@ def drop_path(x, drop_prob=0., training=False, scale_by_keep=True):
 
 
 class DropPath(nn.Module):
-    """ Drop paths (Stochastic Depth) per sample  (when applied in main path of residual blocks).
-    """
+    """Drop paths (Stochastic Depth) per sample  (when applied in main path of residual blocks)."""
 
     def __init__(self, drop_prob=None, scale_by_keep=True):
         super(DropPath, self).__init__()
@@ -438,8 +513,9 @@ class DropPath(nn.Module):
         return drop_path(x, self.drop_prob, self.training, self.scale_by_keep)
 
 
-def trunc_normal_(tensor, mean=0., std=1., a=-2., b=2.):
+def trunc_normal_(tensor, mean=0.0, std=1.0, a=-2.0, b=2.0):
     return _no_grad_trunc_normal_(tensor, mean, std, a, b)
+
 
 # From PyTorch internals
 def _ntuple(n):
@@ -447,6 +523,8 @@ def _ntuple(n):
         if isinstance(x, collections.abc.Iterable) and not isinstance(x, str):
             return tuple(x)
         return tuple(repeat(x, n))
+
     return parse
+
 
 to_2tuple = _ntuple(2)

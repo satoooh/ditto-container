@@ -18,7 +18,7 @@ def onnx_to_trt(onnx_file, trt_file, fp16=False, more_cmd=None):
         compatiable,
         "--fp16" if fp16 else "",
         "--version-compatible",
-        f"--builder-optimization-level=5",
+        "--builder-optimization-level=5",
     ]
     if more_cmd:
         cmd = cmd + more_cmd
@@ -26,7 +26,9 @@ def onnx_to_trt(onnx_file, trt_file, fp16=False, more_cmd=None):
     os.system(" ".join(cmd))
 
 
-def onnx_to_trt_for_gridsample(onnx_file, trt_file, fp16=False, plugin_file="./libgrid_sample_3d_plugin.so"):
+def onnx_to_trt_for_gridsample(
+    onnx_file, trt_file, fp16=False, plugin_file="./libgrid_sample_3d_plugin.so"
+):
     import tensorrt as trt
 
     logger = trt.Logger(trt.Logger.INFO)
@@ -68,9 +70,7 @@ def onnx_to_trt_for_gridsample(onnx_file, trt_file, fp16=False, plugin_file="./l
         compatible = False
 
     if compatible:
-        config.hardware_compatibility_level = (
-            trt.HardwareCompatibilityLevel.AMPERE_PLUS
-        )
+        config.hardware_compatibility_level = trt.HardwareCompatibilityLevel.AMPERE_PLUS
 
     try:
         config.set_flag(trt.BuilderFlag.VERSION_COMPATIBLE)
@@ -116,10 +116,15 @@ def main(onnx_dir, trt_dir, grid_sample_plugin_file=""):
     for name in names:
         if name == "warp_network_ori":
             continue
-        
+
         print("=" * 20, f"{name} start", "=" * 20)
 
-        fp16 = False if name in {"motion_extractor", "hubert", "wavlm"} or name.startswith("lmdm") else True
+        fp16 = (
+            False
+            if name in {"motion_extractor", "hubert", "wavlm"}
+            or name.startswith("lmdm")
+            else True
+        )
 
         more_cmd = None
         if name == "wavlm":
@@ -135,7 +140,6 @@ def main(onnx_dir, trt_dir, grid_sample_plugin_file=""):
                 "--trt-opt-shapes input_values:[1,6480]",
             ]
 
-
         onnx_file = f"{onnx_dir}/{name}.onnx"
         trt_file = f"{trt_dir}/{name}_fp{16 if fp16 else 32}.engine"
 
@@ -144,16 +148,16 @@ def main(onnx_dir, trt_dir, grid_sample_plugin_file=""):
             continue
 
         if name == "warp_network":
-            onnx_to_trt_for_gridsample(onnx_file, trt_file, fp16, plugin_file=grid_sample_plugin_file)
+            onnx_to_trt_for_gridsample(
+                onnx_file, trt_file, fp16, plugin_file=grid_sample_plugin_file
+            )
         else:
             onnx_to_trt(onnx_file, trt_file, fp16, more_cmd=more_cmd)
 
         print("=" * 20, f"{name} done", "=" * 20)
 
 
-
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
     parser.add_argument("--onnx_dir", type=str, help="input onnx dir")
     parser.add_argument("--trt_dir", type=str, help="output trt dir")
@@ -167,4 +171,3 @@ if __name__ == "__main__":
 
     grid_sample_plugin_file = os.path.join(onnx_dir, "libgrid_sample_3d_plugin.so")
     main(onnx_dir, trt_dir, grid_sample_plugin_file)
-

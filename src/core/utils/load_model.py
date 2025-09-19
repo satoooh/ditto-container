@@ -54,7 +54,7 @@ def load_force_ori_type(
     device: str = "cuda",
     module_name="",
     package_name="..aux_models.modules",
-    force_ori_type=False, 
+    force_ori_type=False,
     **kwargs,
 ):
     import importlib

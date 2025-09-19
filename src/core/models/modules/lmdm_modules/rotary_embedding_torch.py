@@ -1,5 +1,5 @@
 from inspect import isfunction
-from math import log, pi
+from math import pi
 
 import torch
 from einops import rearrange, repeat
@@ -22,9 +22,9 @@ def broadcat(tensors, dim=-1):
     dims = list(zip(*map(lambda t: list(t.shape), tensors)))
 
     expandable_dims = [(i, val) for i, val in enumerate(dims) if i != dim]
-    assert all(
-        [*map(lambda t: len(set(t[1])) <= 2, expandable_dims)]
-    ), "invalid dimensions for broadcastable concatentation"
+    assert all([*map(lambda t: len(set(t[1])) <= 2, expandable_dims)]), (
+        "invalid dimensions for broadcastable concatentation"
+    )
     max_dims = list(map(lambda t: (t[0], max(t[1])), expandable_dims))
     expanded_dims = list(map(lambda t: (t[0], (t[1],) * num_tensors), max_dims))
     expanded_dims.insert(dim, (dim, dims[dim]))
@@ -47,9 +47,9 @@ def apply_rotary_emb(freqs, t, start_index=0):
     freqs = freqs.to(t)
     rot_dim = freqs.shape[-1]
     end_index = start_index + rot_dim
-    assert (
-        rot_dim <= t.shape[-1]
-    ), f"feature dimension {t.shape[-1]} is not of sufficient size to rotate in all the positions {rot_dim}"
+    assert rot_dim <= t.shape[-1], (
+        f"feature dimension {t.shape[-1]} is not of sufficient size to rotate in all the positions {rot_dim}"
+    )
     t_left, t, t_right = (
         t[..., :start_index],
         t[..., start_index:end_index],

@@ -25,7 +25,8 @@ def test_uses_requested_path_when_present(monkeypatch: pytest.MonkeyPatch, tmp_p
     existing = tmp_path / "custom"
     existing.mkdir()
     monkeypatch.setattr(
-        "server_paths.os.path.isdir", lambda path: os.path.abspath(path) == str(existing)
+        "server_paths.os.path.isdir",
+        lambda path: os.path.abspath(path) == str(existing),
     )
 
     resolved = resolve_data_root(str(existing))

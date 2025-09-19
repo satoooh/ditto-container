@@ -80,8 +80,10 @@ class SPADEDecoder(nn.Module):
         x = torch.sigmoid(x)  # Bx3xHxW
 
         return x
-    
+
     def load_model(self, ckpt_path):
-        self.load_state_dict(torch.load(ckpt_path, map_location=lambda storage, loc: storage))
+        self.load_state_dict(
+            torch.load(ckpt_path, map_location=lambda storage, loc: storage)
+        )
         self.eval()
         return self

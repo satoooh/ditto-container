@@ -38,7 +38,7 @@ class StreamingServer:
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         self._queue_depths: Dict[str, int] = {}
         self._queue_depth_lock = threading.Lock()
-        
+
         # Initialize FastAPI app
         self.app = FastAPI(title="Ditto Streaming Server", version="1.0.0")
         self.setup_routes()
@@ -47,8 +47,10 @@ class StreamingServer:
 
     async def on_startup(self):
         """Pre-warm heavy libs (TRT/CUDA) and, if可能, run lightweight setup once."""
+
         async def _prewarm_async():
             loop = asyncio.get_event_loop()
+
             def _task():
                 try:
                     logger.info("🔧 Prewarming StreamSDK (loading models/libs)...")
@@ -62,10 +64,14 @@ class StreamingServer:
                         except Exception as e:
                             logger.warning(f"Prewarm setup skipped: {e}")
                     else:
-                        logger.info("Prewarm: example image not found, skipped setup phase")
+                        logger.info(
+                            "Prewarm: example image not found, skipped setup phase"
+                        )
                 except Exception as e:
                     logger.warning(f"Prewarm failed/skipped: {e}")
+
             return await loop.run_in_executor(None, _task)
+
         try:
             await _prewarm_async()
         except Exception as e:
@@ -75,7 +81,7 @@ class StreamingServer:
                 self.loop = asyncio.get_running_loop()
             except RuntimeError:
                 self.loop = None
-        
+
     def setup_routes(self):
         @self.app.get("/")
         async def get_homepage():
@@ -93,22 +99,40 @@ class StreamingServer:
             </body>
             </html>
             """)
-        
+
         @self.app.post("/upload")
-        async def upload_files(audio: UploadFile | None = File(None), source: UploadFile | None = File(None)):
+        async def upload_files(
+            audio: UploadFile | None = File(None),
+            source: UploadFile | None = File(None),
+        ):
             import pathlib
             import uuid
+
             base_dir = pathlib.Path("/app/data/uploads")
             base_dir.mkdir(parents=True, exist_ok=True)
             resp = {}
 
             async def save(upload: UploadFile, tag: str):
-                suffix = pathlib.Path(upload.filename or "").suffix.lower() or (".wav" if tag=="audio" else ".png")
+                suffix = pathlib.Path(upload.filename or "").suffix.lower() or (
+                    ".wav" if tag == "audio" else ".png"
+                )
                 # very light validation
-                if tag == "audio" and suffix not in [".wav", ".mp3", ".m4a", ".flac", ".ogg"]:
-                    return JSONResponse({"error": f"unsupported audio extension: {suffix}"}, status_code=400)
+                if tag == "audio" and suffix not in [
+                    ".wav",
+                    ".mp3",
+                    ".m4a",
+                    ".flac",
+                    ".ogg",
+                ]:
+                    return JSONResponse(
+                        {"error": f"unsupported audio extension: {suffix}"},
+                        status_code=400,
+                    )
                 if tag == "source" and suffix not in [".png", ".jpg", ".jpeg", ".webp"]:
-                    return JSONResponse({"error": f"unsupported image extension: {suffix}"}, status_code=400)
+                    return JSONResponse(
+                        {"error": f"unsupported image extension: {suffix}"},
+                        status_code=400,
+                    )
                 name = f"{uuid.uuid4().hex}_{tag}{suffix}"
                 dst = base_dir / name
                 with dst.open("wb") as f:
@@ -262,7 +286,7 @@ class StreamingServer:
             </body>
             </html>
             """)
-        
+
         @self.app.websocket("/ws/{client_id}")
         async def websocket_endpoint(websocket: WebSocket, client_id: str):
             await self.handle_websocket_connection(websocket, client_id)
@@ -294,7 +318,9 @@ class StreamingServer:
                 frame_queue.put_nowait(message)
             except QueueFull:
                 if message is not None:
-                    logger.warning(f"Dropping frame for {client_id}: queue full ({frame_queue.maxsize})")
+                    logger.warning(
+                        f"Dropping frame for {client_id}: queue full ({frame_queue.maxsize})"
+                    )
             finally:
                 self._set_queue_depth(client_id, frame_queue.qsize())
 
@@ -306,34 +332,38 @@ class StreamingServer:
         try:
             running_loop = asyncio.get_running_loop()
         except RuntimeError:
-            logger.debug(f"Event loop not running when queuing frame for {client_id}; dropping message")
+            logger.debug(
+                f"Event loop not running when queuing frame for {client_id}; dropping message"
+            )
             return
 
         if running_loop.is_running():
             _put()  # same thread as loop
         else:
-            logger.debug(f"Event loop inactive when queuing frame for {client_id}; dropping message")
+            logger.debug(
+                f"Event loop inactive when queuing frame for {client_id}; dropping message"
+            )
 
     async def handle_websocket_connection(self, websocket: WebSocket, client_id: str):
         await websocket.accept()
         self.active_connections[client_id] = websocket
         logger.info(f"Client {client_id} connected")
-        
+
         try:
             while True:
                 # Wait for messages from client
                 message = await websocket.receive_text()
                 data = json.loads(message)
-                
+
                 await self.handle_message(client_id, data)
-                
+
         except WebSocketDisconnect:
             logger.info(f"Client {client_id} disconnected")
             self.cleanup_client(client_id)
         except Exception as e:
             logger.error(f"Error handling client {client_id}: {e}")
             self.cleanup_client(client_id)
-    
+
     async def handle_message(self, client_id: str, data: Dict[str, Any]):
         message_type = data.get("type")
 
@@ -342,58 +372,68 @@ class StreamingServer:
         elif message_type == "stop_streaming":
             await self.stop_streaming(client_id)
         elif message_type == "ping":
-            await self.send_message(client_id, {"type": "pong", "timestamp": time.time()})
+            await self.send_message(
+                client_id, {"type": "pong", "timestamp": time.time()}
+            )
         else:
             logger.warning(f"Unknown message type: {message_type}")
-    
+
     async def start_streaming(self, client_id: str, config: Dict[str, Any]):
         if client_id in self.active_streams:
-            await self.send_message(client_id, {
-                "type": "error", 
-                "message": "Streaming already active for this client"
-            })
+            await self.send_message(
+                client_id,
+                {
+                    "type": "error",
+                    "message": "Streaming already active for this client",
+                },
+            )
             return
-        
+
         # Get streaming parameters
         audio_path = config.get("audio_path", "./example/audio.wav")
         source_path = config.get("source_path", "./example/image.png")
-        
+
         # Validate files exist
         if not os.path.exists(audio_path):
-            await self.send_message(client_id, {
-                "type": "error", 
-                "message": f"Audio file not found: {audio_path}"
-            })
+            await self.send_message(
+                client_id,
+                {"type": "error", "message": f"Audio file not found: {audio_path}"},
+            )
             return
-            
+
         if not os.path.exists(source_path):
-            await self.send_message(client_id, {
-                "type": "error", 
-                "message": f"Source file not found: {source_path}"
-            })
+            await self.send_message(
+                client_id,
+                {"type": "error", "message": f"Source file not found: {source_path}"},
+            )
             return
-        
+
         logger.info(f"Starting streaming for client {client_id}")
-        
+
         # Determine frame transport
         prefer_binary = bool(config.get("binary", True))
 
         # Send streaming started confirmation
-        await self.send_message(client_id, {
-            "type": "streaming_started",
-            "audio_path": audio_path,
-            "source_path": source_path,
-            "timestamp": time.time(),
-            "binary": prefer_binary
-        })
+        await self.send_message(
+            client_id,
+            {
+                "type": "streaming_started",
+                "audio_path": audio_path,
+                "source_path": source_path,
+                "timestamp": time.time(),
+                "binary": prefer_binary,
+            },
+        )
         logger.info(f"Sent streaming started confirmation for client {client_id}")
-        
+
         # Create frame queue for this client
         # Small buffer keeps latency low while absorbing short bursts
         self.frame_queues[client_id] = asyncio.Queue(maxsize=DEFAULT_QUEUE_SIZE)
         self._set_queue_depth(client_id, 0)
-        logger.info(f"Created frame queue for client {client_id} (max={DEFAULT_QUEUE_SIZE})")
-        
+        logger.info(
+            f"Created frame queue for client {client_id} (max={DEFAULT_QUEUE_SIZE})"
+        )
+
         # Add client to active_streams BEFORE creating frame sender task
         # This ensures the frame sender worker can find the client in active_streams
         self.active_streams[client_id] = {
@@ -401,57 +441,66 @@ class StreamingServer:
             "frame_sender_task": None,  # Will be set later
             "start_time": time.time(),
             "frame_count": 0,
-            "prefer_binary": prefer_binary
+            "prefer_binary": prefer_binary,
         }
         logger.info(f"Added client {client_id} to active_streams")
-        
+
         # Start frame sender task
-        frame_sender_task = asyncio.create_task(
-            self.frame_sender_worker(client_id)
-        )
+        frame_sender_task = asyncio.create_task(self.frame_sender_worker(client_id))
         logger.info(f"Created frame sender task for client {client_id}")
-        
+
         # Add done callback for frame sender task
         def frame_sender_done_callback(task):
             if task.exception():
-                logger.error(f"❌ Frame sender task failed for {client_id}: {task.exception()}")
+                logger.error(
+                    f"❌ Frame sender task failed for {client_id}: {task.exception()}"
+                )
             else:
-                logger.info(f"✅ Frame sender task completed successfully for {client_id}")
-        
+                logger.info(
+                    f"✅ Frame sender task completed successfully for {client_id}"
+                )
+
         frame_sender_task.add_done_callback(frame_sender_done_callback)
-        
+
         # Start streaming task with exception handling
         try:
             streaming_task = asyncio.create_task(
                 self.run_streaming_pipeline(client_id, audio_path, source_path, config)
             )
             logger.info(f"Created streaming pipeline task for client {client_id}")
-            
+
             # Add done callback to catch any exceptions
             def task_done_callback(task):
                 if task.exception():
-                    logger.error(f"Streaming task failed for {client_id}: {task.exception()}")
+                    logger.error(
+                        f"Streaming task failed for {client_id}: {task.exception()}"
+                    )
                 else:
-                    logger.info(f"Streaming task completed successfully for {client_id}")
+                    logger.info(
+                        f"Streaming task completed successfully for {client_id}"
+                    )
 
             streaming_task.add_done_callback(task_done_callback)
-            
+
         except Exception as e:
             logger.error(f"Error creating streaming task for {client_id}: {e}")
             # Clean up active_streams if task creation failed
             if client_id in self.active_streams:
                 del self.active_streams[client_id]
-            await self.send_message(client_id, {
-                "type": "error",
-                "message": f"Failed to create streaming task: {str(e)}"
-            })
+            await self.send_message(
+                client_id,
+                {
+                    "type": "error",
+                    "message": f"Failed to create streaming task: {str(e)}",
+                },
+            )
             return
-        
+
         # Update active_streams with the actual task objects
         self.active_streams[client_id]["streaming_task"] = streaming_task
         self.active_streams[client_id]["frame_sender_task"] = frame_sender_task
         logger.info(f"Updated active_streams with task objects for {client_id}")
-    
+
     async def frame_sender_worker(self, client_id: str):
         """Async worker that forwards queued frames to the WebSocket client."""
         logger.info(f"🚀 STARTING frame_sender_worker for {client_id}")
@@ -471,42 +520,49 @@ class StreamingServer:
                     if client_id not in self.active_streams:
                         break
                     continue
-                
+
                 if message is None:
                     logger.debug(f"Poison pill received for {client_id}")
                     break
 
-                msg_type = message.get('type')
-                if msg_type == 'frame' and 'frame_bytes' in message:
-                    prefer_binary = self.active_streams.get(client_id, {}).get('prefer_binary', True)
+                msg_type = message.get("type")
+                if msg_type == "frame" and "frame_bytes" in message:
+                    prefer_binary = self.active_streams.get(client_id, {}).get(
+                        "prefer_binary", True
+                    )
                     if prefer_binary:
                         await self.send_binary_frame(client_id, message)
                     else:
                         await self.send_legacy_frame(client_id, message)
                     frames_sent += 1
                     if frames_sent % 50 == 0:
-                        logger.info(f"📈 Sent {frames_sent} frames to {client_id} (queue={frame_queue.qsize()})")
+                        logger.info(
+                            f"📈 Sent {frames_sent} frames to {client_id} (queue={frame_queue.qsize()})"
+                        )
                 else:
                     await self.send_message(client_id, message)
         except Exception as exc:
             import traceback
+
             logger.error(f"❌ Frame sender worker error for {client_id}: {exc}")
             logger.error(f"❌ Worker traceback: {traceback.format_exc()}")
         finally:
             self._set_queue_depth(client_id, 0)
-            logger.info(f"🏁 EXITING frame_sender_worker for {client_id}, frames sent={frames_sent}")
+            logger.info(
+                f"🏁 EXITING frame_sender_worker for {client_id}, frames sent={frames_sent}"
+            )
 
     async def send_legacy_frame(self, client_id: str, message: Dict[str, Any]):
         if client_id not in self.active_connections:
             return
         try:
-            b64 = base64.b64encode(message['frame_bytes']).decode('utf-8')
+            b64 = base64.b64encode(message["frame_bytes"]).decode("utf-8")
             legacy_msg = {
-                'type': 'frame',
-                'frame_id': message.get('frame_id'),
-                'frame_data': b64,
-                'timestamp': message.get('timestamp'),
-                'mime': 'image/webp'
+                "type": "frame",
+                "frame_id": message.get("frame_id"),
+                "frame_data": b64,
+                "timestamp": message.get("timestamp"),
+                "mime": "image/webp",
             }
             await self.send_message(client_id, legacy_msg)
         except Exception as exc:
@@ -519,9 +575,9 @@ class StreamingServer:
         if client_id not in self.active_connections:
             return
         try:
-            frame_id = int(message.get('frame_id', 0))
-            ts = float(message.get('timestamp', time.time()))
-            frame_bytes = message.get('frame_bytes', b'')
+            frame_id = int(message.get("frame_id", 0))
+            ts = float(message.get("timestamp", time.time()))
+            frame_bytes = message.get("frame_bytes", b"")
             if not isinstance(frame_bytes, (bytes, bytearray)):
                 frame_bytes = bytes(frame_bytes)
             payload = build_binary_frame_payload(frame_id, ts, frame_bytes)
@@ -529,109 +585,140 @@ class StreamingServer:
         except Exception as e:
             logger.error(f"❌ Error sending binary frame to {client_id}: {e}")
             self.cleanup_client(client_id)
-    
-    async def run_streaming_pipeline(self, client_id: str, audio_path: str, source_path: str, config: Dict[str, Any]):
+
+    async def run_streaming_pipeline(
+        self, client_id: str, audio_path: str, source_path: str, config: Dict[str, Any]
+    ):
         try:
             logger.info(f"🚀 ENTERING run_streaming_pipeline for client {client_id}")
             logger.info(f"Config received: {config}")
             logger.info(f"Audio path: {audio_path}, Source path: {source_path}")
-            
+
             # Immediate test to verify we're executing
             await asyncio.sleep(0.001)
             logger.info(f"✅ Async execution confirmed for client {client_id}")
-        
+
         except Exception as immediate_error:
-            logger.error(f"❌ Immediate error in run_streaming_pipeline for {client_id}: {immediate_error}")
+            logger.error(
+                f"❌ Immediate error in run_streaming_pipeline for {client_id}: {immediate_error}"
+            )
             raise
-        
+
         try:
             logger.info(f"About to initialize SDK for client {client_id}")
             logger.info(f"Using cfg_pkl: {self.cfg_pkl}")
             logger.info(f"Using data_root: {self.data_root}")
-            
+
             # Initialize SDK
             SDK = StreamSDK(self.cfg_pkl, self.data_root)
             logger.info(f"SDK initialized successfully for client {client_id}")
-            
+
             # Create custom writer that sends frames via WebSocket
             websocket_writer = WebSocketFrameWriter(self, client_id)
-            
+
             # Setup the pipeline with custom writer
             setup_kwargs = config.get("setup_kwargs", {})
             # Use a temporary output path (won't be used since we replace the writer)
             temp_output_path = f"/tmp/streaming_output_{client_id}.mp4"
-            
+
             logger.info(f"About to call SDK.setup() for client {client_id}")
             logger.info(f"Source path: {source_path}")
             logger.info(f"Temp output path: {temp_output_path}")
             logger.info(f"Setup kwargs: {setup_kwargs}")
-            
+
             # This is where it might be getting stuck - let's run it in executor
             loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, SDK.setup, source_path, temp_output_path, **setup_kwargs)
-            
+            await loop.run_in_executor(
+                None, SDK.setup, source_path, temp_output_path, **setup_kwargs
+            )
+
             logger.info(f"SDK.setup() completed successfully for client {client_id}")
-            
+
             # Replace the writer with our WebSocket writer
-            logger.info(f"Replacing writer with WebSocket writer for client {client_id}")
+            logger.info(
+                f"Replacing writer with WebSocket writer for client {client_id}"
+            )
             SDK.writer = websocket_writer
             logger.info(f"Writer replaced successfully for client {client_id}")
-            
+
             # Load and process audio
             logger.info(f"About to load audio file: {audio_path}")
             import math
 
             import librosa
-            
+
             audio, sr = librosa.core.load(audio_path, sr=16000)
             num_f = math.ceil(len(audio) / 16000 * 25)
-            logger.info(f"Audio loaded: {len(audio)} samples, {len(audio)/sr:.2f}s, {num_f} frames")
-            
+            logger.info(
+                f"Audio loaded: {len(audio)} samples, {len(audio) / sr:.2f}s, {num_f} frames"
+            )
+
             # Setup audio processing
             run_kwargs = config.get("run_kwargs", {})
             fade_in = run_kwargs.get("fade_in", -1)
             fade_out = run_kwargs.get("fade_out", -1)
             ctrl_info = run_kwargs.get("ctrl_info", {})
-            
+
             logger.info(f"About to call SDK.setup_Nd() for client {client_id}")
-            SDK.setup_Nd(N_d=num_f, fade_in=fade_in, fade_out=fade_out, ctrl_info=ctrl_info)
+            SDK.setup_Nd(
+                N_d=num_f, fade_in=fade_in, fade_out=fade_out, ctrl_info=ctrl_info
+            )
             logger.info(f"SDK.setup_Nd() completed for client {client_id}")
-            
+
             # Send metadata to client
             logger.info(f"Sending metadata to client {client_id}")
-            await self.send_message(client_id, {
-                "type": "metadata",
-                "audio_duration": len(audio) / sr,
-                "expected_frames": num_f,
-                "timestamp": time.time()
-            })
+            await self.send_message(
+                client_id,
+                {
+                    "type": "metadata",
+                    "audio_duration": len(audio) / sr,
+                    "expected_frames": num_f,
+                    "timestamp": time.time(),
+                },
+            )
             logger.info(f"Metadata sent to client {client_id}")
-            
+
             # Process audio chunks
-            logger.info(f"Starting audio processing for client {client_id}, online_mode: {SDK.online_mode}")
-            
+            logger.info(
+                f"Starting audio processing for client {client_id}, online_mode: {SDK.online_mode}"
+            )
+
             if SDK.online_mode:
                 chunksize = run_kwargs.get("chunksize", (3, 5, 2))
-                audio = np.concatenate([np.zeros((chunksize[0] * 640,), dtype=np.float32), audio], 0)
+                audio = np.concatenate(
+                    [np.zeros((chunksize[0] * 640,), dtype=np.float32), audio], 0
+                )
                 split_len = int(sum(chunksize) * 0.04 * 16000) + 80
-                
-                logger.info(f"Processing {len(range(0, len(audio), chunksize[1] * 640))} audio chunks")
-                
-                for i, chunk_start in enumerate(range(0, len(audio), chunksize[1] * 640)):
+
+                logger.info(
+                    f"Processing {len(range(0, len(audio), chunksize[1] * 640))} audio chunks"
+                )
+
+                for i, chunk_start in enumerate(
+                    range(0, len(audio), chunksize[1] * 640)
+                ):
                     if client_id not in self.active_streams:
-                        logger.info(f"Client {client_id} disconnected, stopping processing")
+                        logger.info(
+                            f"Client {client_id} disconnected, stopping processing"
+                        )
                         break  # Client disconnected
-                        
-                    audio_chunk = audio[chunk_start:chunk_start + split_len]
+
+                    audio_chunk = audio[chunk_start : chunk_start + split_len]
                     if len(audio_chunk) < split_len:
-                        audio_chunk = np.pad(audio_chunk, (0, split_len - len(audio_chunk)), mode="constant")
-                    
-                    logger.info(f"Processing chunk {i+1} for client {client_id}")
-                    
+                        audio_chunk = np.pad(
+                            audio_chunk,
+                            (0, split_len - len(audio_chunk)),
+                            mode="constant",
+                        )
+
+                    logger.info(f"Processing chunk {i + 1} for client {client_id}")
+
                     # Run the chunk processing in a thread executor to avoid blocking
                     loop = asyncio.get_event_loop()
-                    await loop.run_in_executor(None, SDK.run_chunk, audio_chunk, chunksize)
-                    
+                    await loop.run_in_executor(
+                        None, SDK.run_chunk, audio_chunk, chunksize
+                    )
+
                     # Small delay to prevent overwhelming the WebSocket
                     await asyncio.sleep(0.01)
             else:
@@ -639,23 +726,21 @@ class StreamingServer:
                 logger.info(f"Running offline mode for client {client_id}")
                 aud_feat = SDK.wav2feat.wav2feat(audio)
                 SDK.audio2motion_queue.put(aud_feat)
-            
+
             # Close pipeline
             logger.info(f"Closing pipeline for client {client_id}")
             SDK.close()
-            
+
             # Send completion message
-            await self.send_message(client_id, {
-                "type": "streaming_completed",
-                "timestamp": time.time()
-            })
-            
+            await self.send_message(
+                client_id, {"type": "streaming_completed", "timestamp": time.time()}
+            )
+
         except Exception as e:
             logger.error(f"Streaming error for client {client_id}: {e}")
-            await self.send_message(client_id, {
-                "type": "error",
-                "message": f"Streaming error: {str(e)}"
-            })
+            await self.send_message(
+                client_id, {"type": "error", "message": f"Streaming error: {str(e)}"}
+            )
         finally:
             # Send poison pill to frame sender
             if client_id in self.frame_queues:
@@ -664,7 +749,7 @@ class StreamingServer:
             # Clean up
             if client_id in self.active_streams:
                 del self.active_streams[client_id]
-    
+
     async def stop_streaming(self, client_id: str):
         if client_id in self.active_streams:
             stream_info = self.active_streams[client_id]
@@ -676,28 +761,35 @@ class StreamingServer:
             if client_id in self.frame_queues:
                 self.enqueue_frame(client_id, None)
 
-            await self.send_message(client_id, {
-                "type": "streaming_stopped",
-                "timestamp": time.time()
-            })
+            await self.send_message(
+                client_id, {"type": "streaming_stopped", "timestamp": time.time()}
+            )
             logger.info(f"Stopped streaming for client {client_id}")
-    
+
     async def send_message(self, client_id: str, message: Dict[str, Any]):
         if client_id in self.active_connections:
             try:
                 message_type = message.get("type", "unknown")
                 await self.active_connections[client_id].send_text(json.dumps(message))
-                if message_type in {"streaming_started", "metadata", "streaming_completed", "streaming_stopped"}:
+                if message_type in {
+                    "streaming_started",
+                    "metadata",
+                    "streaming_completed",
+                    "streaming_stopped",
+                }:
                     logger.info(f"Sent {message_type} to {client_id}")
             except Exception as e:
                 logger.error(f"❌ Error sending message to {client_id}: {e}")
                 logger.error(f"❌ Message type was: {message.get('type', 'unknown')}")
                 import traceback
+
                 logger.error(f"❌ Send traceback: {traceback.format_exc()}")
                 self.cleanup_client(client_id)
         else:
-            logger.error(f"❌ Client {client_id} not in active_connections when sending {message.get('type', 'unknown')}")
-    
+            logger.error(
+                f"❌ Client {client_id} not in active_connections when sending {message.get('type', 'unknown')}"
+            )
+
     def cleanup_client(self, client_id: str):
         if client_id in self.active_connections:
             del self.active_connections[client_id]
@@ -714,12 +806,12 @@ class StreamingServer:
 
 class WebSocketFrameWriter:
     """Custom writer that sends frames via WebSocket instead of writing to file"""
-    
+
     def __init__(self, server: StreamingServer, client_id: str):
         self.server = server
         self.client_id = client_id
         self.frame_count = 0
-        
+
     def __call__(self, frame_rgb: np.ndarray, fmt: str = "rgb"):
         if cv2 is None:
             raise RuntimeError(
@@ -731,7 +823,7 @@ class WebSocketFrameWriter:
             frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
         else:
             frame_bgr = frame_rgb
-            
+
         queue_depth = self.server.get_queue_depth(self.client_id)
         if queue_depth > DEFAULT_QUEUE_SIZE * 0.8:
             quality = 60
@@ -741,15 +833,17 @@ class WebSocketFrameWriter:
             quality = 85
 
         # Encode frame as WebP (adaptive品質)
-        _, buffer = cv2.imencode('.webp', frame_bgr, [cv2.IMWRITE_WEBP_QUALITY, quality])
+        _, buffer = cv2.imencode(
+            ".webp", frame_bgr, [cv2.IMWRITE_WEBP_QUALITY, quality]
+        )
         image_bytes = buffer.tobytes()
-        
+
         # Send frame via WebSocket using queue
         message = {
             "type": "frame",
             "frame_id": self.frame_count,
             "frame_bytes": image_bytes,
-            "timestamp": time.time()
+            "timestamp": time.time(),
         }
 
         self.server.enqueue_frame(self.client_id, message)
@@ -758,37 +852,45 @@ class WebSocketFrameWriter:
                 f"Enqueued frame {self.frame_count} for {self.client_id} "
                 f"(WebP quality={quality}%, queue≈{queue_depth})"
             )
-        
+
         self.frame_count += 1
-        
+
         # Update stream info
         if self.client_id in self.server.active_streams:
             self.server.active_streams[self.client_id]["frame_count"] = self.frame_count
-    
+
     def close(self):
         # Send completion message
         message = {
             "type": "writer_closed",
             "total_frames": self.frame_count,
-            "timestamp": time.time()
+            "timestamp": time.time(),
         }
-        
+
         self.server.enqueue_frame(self.client_id, message)
 
 
 def main():
     import argparse
-    
+
     parser = argparse.ArgumentParser(description="Ditto Streaming Server")
-    parser.add_argument("--data_root", type=str, default=None,
-                      help="Path to TRT engine directory (defaults to auto-detect)")
-    parser.add_argument("--cfg_pkl", type=str, default="../checkpoints/ditto_cfg/v0.4_hubert_cfg_trt_online.pkl",
-                      help="Path to cfg_pkl")
+    parser.add_argument(
+        "--data_root",
+        type=str,
+        default=None,
+        help="Path to TRT engine directory (defaults to auto-detect)",
+    )
+    parser.add_argument(
+        "--cfg_pkl",
+        type=str,
+        default="../checkpoints/ditto_cfg/v0.4_hubert_cfg_trt_online.pkl",
+        help="Path to cfg_pkl",
+    )
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Host to bind to")
     parser.add_argument("--port", type=int, default=8000, help="Port to bind to")
-    
+
     args = parser.parse_args()
-    
+
     # Resolve TensorRT engine directory (auto-detect across GPU generations)
     try:
         data_root = resolve_data_root(args.data_root)
@@ -798,19 +900,14 @@ def main():
 
     # Initialize server
     server = StreamingServer(args.cfg_pkl, data_root)
-    
+
     # Run server
     logger.info(f"Starting Ditto Streaming Server on {args.host}:{args.port}")
     logger.info(f"Using TensorRT engines in: {data_root}")
     logger.info(f"Using config: {args.cfg_pkl}")
-    
-    uvicorn.run(
-        server.app,
-        host=args.host,
-        port=args.port,
-        log_level="info"
-    )
+
+    uvicorn.run(server.app, host=args.host, port=args.port, log_level="info")
 
 
 if __name__ == "__main__":
-    main() 
+    main()

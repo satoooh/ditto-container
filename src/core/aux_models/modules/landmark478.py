@@ -24,7 +24,7 @@ class Landmark478:
         image = mp.Image(image_format=mp.ImageFormat.SRGB, data=img)
         detection_result = self.detector.detect(image)
         return detection_result
-    
+
     @staticmethod
     def mplmk_to_nplmk(results):
         face_landmarks_list = results.face_landmarks

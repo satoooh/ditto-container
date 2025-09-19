@@ -9,6 +9,7 @@ warp_network_cfg = {
 }
 """
 
+
 class WarpF3D:
     def __init__(
         self,
@@ -19,4 +20,3 @@ class WarpF3D:
     def __call__(self, f_s, x_s, x_d):
         out = self.warp_net(f_s, x_s, x_d)
         return out
-    

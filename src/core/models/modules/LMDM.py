@@ -9,11 +9,11 @@ class LMDM(nn.Module):
     def __init__(
         self,
         motion_feat_dim=265,
-        audio_feat_dim=1024+35,
+        audio_feat_dim=1024 + 35,
         seq_frames=80,
-        checkpoint='',
-        device='cuda',
-        clip_denoised=False,    # clip denoised (-1,1)
+        checkpoint="",
+        device="cuda",
+        clip_denoised=False,  # clip denoised (-1,1)
         multi_cond_frame=False,
     ):
         super().__init__()
@@ -55,33 +55,35 @@ class LMDM(nn.Module):
         self.register_buffer(
             "sqrt_recipm1_alphas_cumprod", torch.sqrt(1.0 / alphas_cumprod - 1)
         )
-        self.register_buffer("sqrt_recip1m_alphas_cumprod", torch.sqrt(1.0 / (1.0 - alphas_cumprod)))
+        self.register_buffer(
+            "sqrt_recip1m_alphas_cumprod", torch.sqrt(1.0 / (1.0 - alphas_cumprod))
+        )
 
     def predict_noise_from_start(self, x_t, t, x0):
         a = extract(self.sqrt_recip1m_alphas_cumprod, t, x_t.shape)
         b = extract(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape)
-        return (a * x_t - x0 / b)
-    
+        return a * x_t - x0 / b
+
     def maybe_clip(self, x):
         if self.clip_denoised:
-            return torch.clamp(x, min=-1., max=1.)
+            return torch.clamp(x, min=-1.0, max=1.0)
         else:
             return x
-        
+
     def model_predictions(self, x, cond_frame, cond, t):
         weight = self.guidance_weight
         x_start = self.model.guided_forward(x, cond_frame, cond, t, weight)
         x_start = self.maybe_clip(x_start)
         pred_noise = self.predict_noise_from_start(x, t, x_start)
         return pred_noise, x_start
-    
+
     @torch.no_grad()
     def forward(self, x, cond_frame, cond, time_cond):
         pred_noise, x_start = self.model_predictions(x, cond_frame, cond, time_cond)
         return pred_noise, x_start
-    
+
     def load_model(self, ckpt_path):
-        checkpoint = torch.load(ckpt_path, map_location='cpu')
+        checkpoint = torch.load(ckpt_path, map_location="cpu")
         self.model.load_state_dict(checkpoint["model_state_dict"])
         self.eval()
         return self
@@ -89,7 +91,7 @@ class LMDM(nn.Module):
     def setup(self, sampling_timesteps=50):
         if self.sampling_timesteps == sampling_timesteps:
             return
-        
+
         self.sampling_timesteps = sampling_timesteps
 
         total_timesteps = self.n_timestep
@@ -97,9 +99,13 @@ class LMDM(nn.Module):
         eta = 1
         shape = (1, self.seq_frames, self.motion_feat_dim)
 
-        times = torch.linspace(-1, total_timesteps - 1, steps=sampling_timesteps + 1)   # [-1, 0, 1, 2, ..., T-1] when sampling_timesteps == total_timesteps
+        times = torch.linspace(
+            -1, total_timesteps - 1, steps=sampling_timesteps + 1
+        )  # [-1, 0, 1, 2, ..., T-1] when sampling_timesteps == total_timesteps
         times = list(reversed(times.int().tolist()))
-        self.time_pairs = list(zip(times[:-1], times[1:])) # [(T-1, T-2), (T-2, T-3), ..., (1, 0), (0, -1)]
+        self.time_pairs = list(
+            zip(times[:-1], times[1:])
+        )  # [(T-1, T-2), (T-2, T-3), ..., (1, 0), (0, -1)]
 
         self.time_cond_list = []
         self.alpha_next_sqrt_list = []
@@ -115,8 +121,10 @@ class LMDM(nn.Module):
             alpha = self.alphas_cumprod[time]
             alpha_next = self.alphas_cumprod[time_next]
 
-            sigma = eta * ((1 - alpha / alpha_next) * (1 - alpha_next) / (1 - alpha)).sqrt()
-            c = (1 - alpha_next - sigma ** 2).sqrt()
+            sigma = (
+                eta * ((1 - alpha / alpha_next) * (1 - alpha_next) / (1 - alpha)).sqrt()
+            )
+            c = (1 - alpha_next - sigma**2).sqrt()
             noise = torch.randn(shape, device=device)
 
             self.alpha_next_sqrt_list.append(alpha_next.sqrt())
@@ -151,4 +159,3 @@ class LMDM(nn.Module):
 
             i += 1
         return x  # pred_kp_seq
-

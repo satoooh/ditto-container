@@ -12,7 +12,9 @@ class HubertStreaming:
 
     def forward_chunk(self, audio_chunk):
         if self.model_type == "onnx":
-            output = self.model.run(None, {"input_values": audio_chunk.reshape(1, -1)})[0]
+            output = self.model.run(None, {"input_values": audio_chunk.reshape(1, -1)})[
+                0
+            ]
         elif self.model_type == "tensorrt":
             self.model.setup({"input_values": audio_chunk.reshape(1, -1)})
             self.model.infer()
@@ -20,7 +22,7 @@ class HubertStreaming:
         else:
             raise ValueError(f"Unsupported model type: {self.model_type}")
         return output
-    
+
     def __call__(self, audio_chunk):
         if self.model_type == "ori":
             output = self.model.forward_chunk(audio_chunk)

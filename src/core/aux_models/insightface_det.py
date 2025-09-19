@@ -43,8 +43,8 @@ def distance2kps(points, distance, max_shape=None):
     """
     preds = []
     for i in range(0, distance.shape[1], 2):
-        px = points[:, i%2] + distance[:, i]
-        py = points[:, i%2+1] + distance[:, i+1]
+        px = points[:, i % 2] + distance[:, i]
+        py = points[:, i % 2 + 1] + distance[:, i + 1]
         if max_shape is not None:
             px = px.clamp(min=0, max=max_shape[1])
             py = py.clamp(min=0, max=max_shape[0])
@@ -111,7 +111,13 @@ class InsightFaceDet:
         bboxes_list = []
         kpss_list = []
         input_size = tuple(img.shape[0:2][::-1])
-        blob = cv2.dnn.blobFromImage(img, 1.0/self.input_std, input_size, (self.input_mean, self.input_mean, self.input_mean), swapRB=True)
+        blob = cv2.dnn.blobFromImage(
+            img,
+            1.0 / self.input_std,
+            input_size,
+            (self.input_mean, self.input_mean, self.input_mean),
+            swapRB=True,
+        )
         # (1, 3, 512, 512)
         net_outs = self._run_model(blob)
 
@@ -120,10 +126,10 @@ class InsightFaceDet:
         fmc = self.fmc
         for idx, stride in enumerate(self._feat_stride_fpn):
             scores = net_outs[idx]
-            bbox_preds = net_outs[idx+fmc]
+            bbox_preds = net_outs[idx + fmc]
             bbox_preds = bbox_preds * stride
             if self.use_kps:
-                kps_preds = net_outs[idx+fmc*2] * stride
+                kps_preds = net_outs[idx + fmc * 2] * stride
             height = input_height // stride
             width = input_width // stride
             # K = height * width
@@ -131,15 +137,19 @@ class InsightFaceDet:
             if key in self.center_cache:
                 anchor_centers = self.center_cache[key]
             else:
-                #solution-3:
-                anchor_centers = np.stack(np.mgrid[:height, :width][::-1], axis=-1).astype(np.float32)
-                anchor_centers = (anchor_centers * stride).reshape( (-1, 2) )
-                if self._num_anchors>1:
-                    anchor_centers = np.stack([anchor_centers]*self._num_anchors, axis=1).reshape( (-1,2) )
-                if len(self.center_cache)<100:
+                # solution-3:
+                anchor_centers = np.stack(
+                    np.mgrid[:height, :width][::-1], axis=-1
+                ).astype(np.float32)
+                anchor_centers = (anchor_centers * stride).reshape((-1, 2))
+                if self._num_anchors > 1:
+                    anchor_centers = np.stack(
+                        [anchor_centers] * self._num_anchors, axis=1
+                    ).reshape((-1, 2))
+                if len(self.center_cache) < 100:
                     self.center_cache[key] = anchor_centers
 
-            pos_inds = np.where(scores>=threshold)[0]
+            pos_inds = np.where(scores >= threshold)[0]
             bboxes = distance2bbox(anchor_centers, bbox_preds)
             pos_scores = scores[pos_inds]
             pos_bboxes = bboxes[pos_inds]
@@ -147,18 +157,20 @@ class InsightFaceDet:
             bboxes_list.append(pos_bboxes)
             if self.use_kps:
                 kpss = distance2kps(anchor_centers, kps_preds)
-                kpss = kpss.reshape( (kpss.shape[0], -1, 2) )
+                kpss = kpss.reshape((kpss.shape[0], -1, 2))
                 pos_kpss = kpss[pos_inds]
                 kpss_list.append(pos_kpss)
         return scores_list, bboxes_list, kpss_list
-    
-    def detect(self, img, input_size=None, max_num=0, metric='default', det_thresh=None):
+
+    def detect(
+        self, img, input_size=None, max_num=0, metric="default", det_thresh=None
+    ):
         input_size = self.input_size if input_size is None else input_size
         det_thresh = self.det_thresh if det_thresh is None else det_thresh
-            
+
         im_ratio = float(img.shape[0]) / img.shape[1]
         model_ratio = float(input_size[1]) / input_size[0]
-        if im_ratio>model_ratio:
+        if im_ratio > model_ratio:
             new_height = input_size[1]
             new_width = int(new_height / im_ratio)
         else:
@@ -166,7 +178,7 @@ class InsightFaceDet:
             new_height = int(new_width * im_ratio)
         det_scale = float(new_height) / img.shape[0]
         resized_img = cv2.resize(img, (new_width, new_height))
-        det_img = np.zeros( (input_size[1], input_size[0], 3), dtype=np.uint8 )
+        det_img = np.zeros((input_size[1], input_size[0], 3), dtype=np.uint8)
         det_img[:new_height, :new_width, :] = resized_img
 
         scores_list, bboxes_list, kpss_list = self._forward(det_img, det_thresh)
@@ -182,29 +194,33 @@ class InsightFaceDet:
         keep = self.nms(pre_det)
         det = pre_det[keep, :]
         if self.use_kps:
-            kpss = kpss[order,:,:]
-            kpss = kpss[keep,:,:]
+            kpss = kpss[order, :, :]
+            kpss = kpss[keep, :, :]
         else:
             kpss = None
         if max_num > 0 and det.shape[0] > max_num:
             area = (det[:, 2] - det[:, 0]) * (det[:, 3] - det[:, 1])
             img_center = img.shape[0] // 2, img.shape[1] // 2
-            offsets = np.vstack([
-                (det[:, 0] + det[:, 2]) / 2 - img_center[1],
-                (det[:, 1] + det[:, 3]) / 2 - img_center[0]
-            ])
+            offsets = np.vstack(
+                [
+                    (det[:, 0] + det[:, 2]) / 2 - img_center[1],
+                    (det[:, 1] + det[:, 3]) / 2 - img_center[0],
+                ]
+            )
             offset_dist_squared = np.sum(np.power(offsets, 2.0), 0)
-            if metric=='max':
+            if metric == "max":
                 values = area
             else:
-                values = area - offset_dist_squared * 2.0  # some extra weight on the centering
+                values = (
+                    area - offset_dist_squared * 2.0
+                )  # some extra weight on the centering
             bindex = np.argsort(values)[::-1]  # some extra weight on the centering
             bindex = bindex[0:max_num]
             det = det[bindex, :]
             if kpss is not None:
                 kpss = kpss[bindex, :]
         return det, kpss
-    
+
     def nms(self, dets):
         thresh = self.nms_thresh
         x1 = dets[:, 0]
@@ -240,6 +256,5 @@ class InsightFaceDet:
             det, kpss = self.model.detect(img, **kwargs)
         else:
             det, kpss = self.detect(img, **kwargs)
-        
-        return det, kpss
 
+        return det, kpss
