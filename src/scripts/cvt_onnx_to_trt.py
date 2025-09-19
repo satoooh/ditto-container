@@ -54,33 +54,6 @@ def _resolve_hardware_compatibility():
         return members[chosen], _cli_name(chosen)
     return None, None
 
-    major, _ = torch.cuda.get_device_capability()
-    available = {level.name: level for level in trt.HardwareCompatibilityLevel}
-    ordered_prefixes = [
-        ("BLACKWELL", 12, None),
-        ("HOPPER", 9, 11),
-        ("ADA", 8, 8),
-        ("AMPERE", 8, 8),
-    ]
-
-    def _cli_name(enum_name: str) -> str:
-        return "--hardware-compatibility-level=" + "_".join(
-            part.capitalize() for part in enum_name.split("_")
-        )
-
-    for prefix, min_major, max_major in ordered_prefixes:
-        if major < min_major:
-            continue
-        if max_major is not None and major > max_major:
-            continue
-        candidates = [name for name in available if prefix in name]
-        if not candidates:
-            continue
-        candidates.sort(key=lambda name: (0 if name.endswith("PLUS") else 1, len(name)))
-        chosen = candidates[0]
-        return available[chosen], _cli_name(chosen)
-    return None, None
-
 
 def onnx_to_trt(onnx_file, trt_file, fp16=False, more_cmd=None):
     _, compat_flag = _resolve_hardware_compatibility()

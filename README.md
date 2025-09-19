@@ -34,7 +34,7 @@ git clone https://huggingface.co/digital-avatar/ditto-talkinghead checkpoints
 ```
 `./setup.sh` は以下を実行します。
 - `checkpoints/`,`data/`,`output/` の作成
-- CUDA 12.9 + TensorRT-RTX 10.12 ベースのイメージをビルド
+- CUDA 12.9 + TensorRT-RTX 10.13 ベースのイメージをビルド
 - Docker Compose v2 → v1 → plain docker の順に起動を試行
 - fallback 時は `bash -lc 'sleep infinity'` でコンテナ終了を防止
 
