@@ -42,7 +42,7 @@ sudo docker login nvcr.io
 ```
 `./setup.sh` は以下を実行します。
 - `checkpoints/`,`data/`,`output/` の作成
-- NGC ベースの `nvcr.io/nvidia/tensorrt:25.08-py3` を元に CUDA 12.9 + TensorRT 10.9 イメージをビルド
+- NGC ベースの `nvcr.io/nvidia/tensorrt:25.08-py3` を元に CUDA 12.9 + TensorRT Python 10.x ホイールをセットアップ
 - Docker Compose v2 → v1 → plain docker の順に起動を試行
 - fallback 時は `bash -lc 'sleep infinity'` でコンテナ終了を防止
 
@@ -53,9 +53,14 @@ sudo docker login nvcr.io
 ```
 
 ### 2-4. TensorRT エンジンを再生成する
-TensorRT 10.9 は Ampere〜Blackwell まで 1 つのエンジンで共有できます。新しい GPU を追加したら、以下の手順で universal ディレクトリを更新してください。
+TensorRT 10.x (Python バインディング 10 系) は Ampere〜Blackwell まで 1 つのエンジンで共有できます。新しい GPU を追加したら、以下の手順で universal ディレクトリを更新してください。
 ```bash
 # コンテナ内 (/app) で実行
+python - <<'PY'
+import tensorrt as trt
+print('TensorRT Python version:', trt.__version__)
+PY
+
 python src/scripts/cvt_onnx_to_trt.py \
   --onnx_dir /app/checkpoints/ditto_onnx \
   --trt_dir /app/checkpoints/ditto_trt_blackwell

@@ -42,6 +42,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN python -m pip install --upgrade pip
 
+RUN python -m pip uninstall -y tensorrt tensorrt_dispatch || true
+RUN python -m pip install \
+    /opt/tensorrt/python/tensorrt-*-cp*.whl \
+    /opt/tensorrt/python/tensorrt_dispatch-*-cp*.whl
+
 ENV PIP_EXTRA_INDEX_URL=https://pypi.org/simple
 
 RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
