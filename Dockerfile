@@ -92,10 +92,12 @@ else:
             sys.modules['tensorrt'] = _trt_impl
 ''')
 if sitecustomize.exists():
-    sitecustomize.write_text(sitecustomize.read_text() + '
-' + shim)
+    existing = sitecustomize.read_text()
+    if existing and not existing.endswith('\n'):
+        existing += '\n'
 else:
-    sitecustomize.write_text(shim)
+    existing = ''
+sitecustomize.write_text(existing + shim)
 PY
 
 RUN python - <<'PY'
