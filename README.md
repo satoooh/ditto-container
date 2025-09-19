@@ -4,9 +4,10 @@ TensorRT 版 Ditto Talking Head を GPU 対応 Docker コンテナで再現し�
 
 ---
 ## 1. 前提条件
-- NVIDIA GPU（Ampere 世代以上推奨）と R575.51 以降のホストドライバ（CUDA 12.9 対応）
+- NVIDIA GPU（Ampere 〜 Blackwell 世代）と R575.51 以降のホストドライバ（CUDA 12.9 対応）
 - Docker / Docker Compose v2（v1 でも可）
 - NVIDIA Container Toolkit（`nvidia-container-toolkit`）
+- NVIDIA NGC アカウントと `docker login nvcr.io` が可能な資格情報
 - モデルチェックポイント（Hugging Face: `digital-avatar/ditto-talkinghead`）
 
 ---
@@ -29,12 +30,19 @@ git clone https://huggingface.co/digital-avatar/ditto-talkinghead checkpoints
 - 新しい GPU で利用する際は `python src/scripts/cvt_onnx_to_trt.py --onnx_dir /app/checkpoints/ditto_onnx --trt_dir /app/checkpoints/ditto_trt_blackwell` で再生成
 
 ### 2-3. コンテナのビルドと起動
+初回は NGC へログインして TensorRT コンテナを取得します。
+```bash
+sudo docker login nvcr.io
+# Username: $oauthtoken
+# Password: <NGC API Key>
+```
+その後、通常どおりビルド & 起動します。
 ```bash
 ./setup.sh all     # build + run
 ```
 `./setup.sh` は以下を実行します。
 - `checkpoints/`,`data/`,`output/` の作成
-- CUDA 12.9 + TensorRT-RTX 10.13 ベースのイメージをビルド
+- NGC ベースの `nvcr.io/nvidia/tensorrt:25.08-py3` を元に CUDA 12.9 + TensorRT 10.9 イメージをビルド
 - Docker Compose v2 → v1 → plain docker の順に起動を試行
 - fallback 時は `bash -lc 'sleep infinity'` でコンテナ終了を防止
 
@@ -45,7 +53,7 @@ git clone https://huggingface.co/digital-avatar/ditto-talkinghead checkpoints
 ```
 
 ### 2-4. TensorRT エンジンを再生成する
-TensorRT-RTX 10.x は Ampere〜Blackwell まで 1 つのエンジンで共有できます。新しい GPU を追加したら、以下の手順で universal ディレクトリを更新してください。
+TensorRT 10.9 は Ampere〜Blackwell まで 1 つのエンジンで共有できます。新しい GPU を追加したら、以下の手順で universal ディレクトリを更新してください。
 ```bash
 # コンテナ内 (/app) で実行
 python src/scripts/cvt_onnx_to_trt.py \
