@@ -211,11 +211,11 @@ def parse_rect_from_landmark(
     pt2 = parse_pt2_from_pt_x(pts, use_lip=kwargs.get("use_lip", True))
 
     uy = pt2[1] - pt2[0]
-    l = np.linalg.norm(uy)
-    if l <= 1e-3:
+    eye_axis_length = np.linalg.norm(uy)
+    if eye_axis_length <= 1e-3:
         uy = np.array([0, 1], dtype=DTYPE)
     else:
-        uy /= l
+        uy /= eye_axis_length
     ux = np.array((uy[1], -uy[0]), dtype=DTYPE)
 
     # the rotation degree of the x-axis, the clockwise is positive, the counterclockwise is negative (image coordinate system)

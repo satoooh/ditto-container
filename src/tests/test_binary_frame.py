@@ -1,3 +1,4 @@
+import importlib
 import math
 import sys
 from pathlib import Path
@@ -8,11 +9,10 @@ SRC_DIR = Path(__file__).resolve().parents[2] / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from streaming_protocol import (
-    FRAME_HEADER_STRUCT,
-    build_binary_frame_payload,
-    parse_binary_frame,
-)
+_streaming_protocol = importlib.import_module("streaming_protocol")
+FRAME_HEADER_STRUCT = _streaming_protocol.FRAME_HEADER_STRUCT
+build_binary_frame_payload = _streaming_protocol.build_binary_frame_payload
+parse_binary_frame = _streaming_protocol.parse_binary_frame
 
 
 def test_build_binary_frame_payload_roundtrip() -> None:

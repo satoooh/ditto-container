@@ -154,7 +154,7 @@ class BandwidthTester:
                     await websocket.send_text("ack")
 
             # Wait for completion signal
-            completion = await websocket.receive_text()
+            await websocket.receive_text()
             await websocket.send_text("ack")
 
             end_time = time.time()

@@ -60,7 +60,7 @@ class OnlineStats:
                 self.queue_depths["decode_f3d"].append(SDK.decode_f3d_queue.qsize())
                 self.queue_depths["putback"].append(SDK.putback_queue.qsize())
                 self.queue_depths["writer"].append(SDK.writer_queue.qsize())
-            except:
+            except Exception:
                 pass
             time.sleep(0.1)  # Monitor every 100ms
 

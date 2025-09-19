@@ -540,7 +540,7 @@ class StreamSDK:
         try:
             self.writer.close()
             self.writer_pbar.close()
-        except:
+        except Exception:
             traceback.print_exc()
 
         # Check if any worker encountered an exception
