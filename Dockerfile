@@ -78,18 +78,24 @@ purelib = pathlib.Path(sysconfig.get_path('purelib'))
 sitecustomize = purelib / 'sitecustomize.py'
 shim = textwrap.dedent('''
 import sys, importlib
-try:
-    import tensorrt as _trt_pkg
-except Exception:
-    _trt_pkg = None
-else:
-    if not hasattr(_trt_pkg, 'Logger'):
+
+def _ensure_trt_bindings():
+    module = sys.modules.get('tensorrt')
+    if module is not None and hasattr(module, 'Logger') and hasattr(module, 'OnnxParserFlag'):
+        return
+    for candidate in (
+        'tensorrt_cu13_bindings',
+        'tensorrt.tensorrt',
+    ):
         try:
-            _trt_impl = importlib.import_module('tensorrt.tensorrt')
+            impl = importlib.import_module(candidate)
         except Exception:
-            pass
+            continue
         else:
-            sys.modules['tensorrt'] = _trt_impl
+            sys.modules['tensorrt'] = impl
+            return
+
+_ensure_trt_bindings()
 ''')
 if sitecustomize.exists():
     existing = sitecustomize.read_text()
