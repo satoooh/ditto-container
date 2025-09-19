@@ -73,11 +73,40 @@ RUN pip install --extra-index-url https://pypi.org/simple \
     pyaudio
 
 RUN python - <<'PY'
+import sysconfig, pathlib, textwrap
+purelib = pathlib.Path(sysconfig.get_path('purelib'))
+sitecustomize = purelib / 'sitecustomize.py'
+shim = textwrap.dedent('''
+import sys, importlib
+try:
+    import tensorrt as _trt_pkg
+except Exception:
+    _trt_pkg = None
+else:
+    if not hasattr(_trt_pkg, 'Logger'):
+        try:
+            _trt_impl = importlib.import_module('tensorrt.tensorrt')
+        except Exception:
+            pass
+        else:
+            sys.modules['tensorrt'] = _trt_impl
+''')
+if sitecustomize.exists():
+    sitecustomize.write_text(sitecustomize.read_text() + '
+' + shim)
+else:
+    sitecustomize.write_text(shim)
+PY
+
+RUN python - <<'PY'
 from importlib.metadata import version
 import tensorrt
 ver = version('tensorrt')
 print('Verified TensorRT version:', ver)
 assert ver.startswith('10.13'), ver
+import tensorrt as trt
+print('Has Logger:', hasattr(trt, 'Logger'))
+print('Has OnnxParserFlag:', hasattr(trt, 'OnnxParserFlag'))
 PY
 
 WORKDIR /app
