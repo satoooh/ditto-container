@@ -57,9 +57,11 @@ TensorRT 10.x (Python バインディング 10 系) は Ampere〜Blackwell ま�
 ```bash
 # コンテナ内 (/app) で実行
 python - <<'PY'
-import tensorrt as trt
-print('TensorRT Python version:', trt.__version__)
-assert trt.__version__.startswith('10.13'), trt.__version__
+from importlib.metadata import version
+import tensorrt
+ver = version('tensorrt')
+print('TensorRT Python version:', ver)
+assert ver.startswith('10.13'), ver
 PY
 
 python src/scripts/cvt_onnx_to_trt.py \

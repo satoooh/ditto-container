@@ -70,9 +70,11 @@ RUN pip install --extra-index-url https://pypi.org/simple \
     pyaudio
 
 RUN python - <<'PY'
-import tensorrt as trt
-print('Verified TensorRT version:', trt.__version__)
-assert trt.__version__.startswith('10.13'), trt.__version__
+from importlib.metadata import version
+import tensorrt
+ver = version('tensorrt')
+print('Verified TensorRT version:', ver)
+assert ver.startswith('10.13'), ver
 PY
 
 WORKDIR /app
