@@ -42,9 +42,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN python -m pip install --upgrade pip
 
-ENV PIP_INDEX_URL=https://pypi.nvidia.com
-
-RUN pip install --no-cache-dir "tensorrt==10.13.3.9" "tensorrt-cu13==10.13.3.9" "tensorrt-cu13-bindings==10.13.3.9" "tensorrt-cu13-libs==10.13.3.9"
+RUN pip install --no-cache-dir \
+    --extra-index-url https://pypi.nvidia.com \
+    "tensorrt==10.13.3.9"
 
 ENV PIP_EXTRA_INDEX_URL=https://pypi.org/simple
 
