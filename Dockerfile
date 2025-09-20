@@ -84,6 +84,7 @@ def _ensure_trt_bindings():
     if module is not None and hasattr(module, 'Logger') and hasattr(module, 'OnnxParserFlag'):
         return
     for candidate in (
+        'tensorrt_bindings',
         'tensorrt_cu13_bindings',
         'tensorrt.tensorrt',
     ):
