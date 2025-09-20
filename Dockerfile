@@ -76,7 +76,7 @@ RUN python - <<'PY'
 import sysconfig, pathlib, textwrap
 purelib = pathlib.Path(sysconfig.get_path('purelib'))
 sitecustomize = purelib / 'sitecustomize.py'
-shim = textwrap.dedent('''
+shim = textwrap.dedent("""
 import sys, importlib, types
 
 def _ensure_trt_bindings():
@@ -102,13 +102,11 @@ def _ensure_trt_bindings():
         return
 
 _ensure_trt_bindings()
-''')
+""")
 if sitecustomize.exists():
     existing = sitecustomize.read_text()
-    if existing and not existing.endswith('
-'):
-        existing += '
-'
+    if existing and not existing.endswith('\n'):
+        existing += '\n'
 else:
     existing = ''
 sitecustomize.write_text(existing + shim)
