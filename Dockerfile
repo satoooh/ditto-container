@@ -77,7 +77,7 @@ import sysconfig, pathlib, textwrap
 purelib = pathlib.Path(sysconfig.get_path('purelib'))
 sitecustomize = purelib / 'sitecustomize.py'
 shim = textwrap.dedent('''
-import sys, importlib
+import sys, importlib, types
 
 def _ensure_trt_bindings():
     module = sys.modules.get('tensorrt')
@@ -91,16 +91,23 @@ def _ensure_trt_bindings():
             impl = importlib.import_module(candidate)
         except Exception:
             continue
-        else:
-            sys.modules['tensorrt'] = impl
-            return
+        wrapper = types.ModuleType('tensorrt')
+        wrapper.__dict__.update(vars(impl))
+        wrapper.__file__ = getattr(impl, '__file__', None)
+        wrapper.__path__ = getattr(impl, '__path__', None)
+        wrapper.__package__ = 'tensorrt'
+        wrapper.__loader__ = getattr(impl, '__loader__', None)
+        sys.modules['tensorrt'] = wrapper
+        return
 
 _ensure_trt_bindings()
 ''')
 if sitecustomize.exists():
     existing = sitecustomize.read_text()
-    if existing and not existing.endswith('\n'):
-        existing += '\n'
+    if existing and not existing.endswith('
+'):
+        existing += '
+'
 else:
     existing = ''
 sitecustomize.write_text(existing + shim)
