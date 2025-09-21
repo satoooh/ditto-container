@@ -66,11 +66,16 @@ PY
 
 python src/scripts/cvt_onnx_to_trt.py \
   --onnx_dir /app/checkpoints/ditto_onnx \
-  --trt_dir /app/checkpoints/ditto_trt_blackwell
+  --trt_dir /app/checkpoints/ditto_trt_blackwell \
+  --hardware-compatibility ampere_plus \
+  --hardware-compatibility same_cc
 ```
 - `--onnx_dir` には Hugging Face 配布の `checkpoints/ditto_onnx/` を指定（パス名が異なる場合はシンボリックリンクを作るか引数を調整）
-- GPU の Compute Capability から Ampere/Ada/Blackwell 向けハードウェア互換レベルを自動選択します（RTX 5090 では `Blackwell_Plus`）
+- 既定の `auto` に加え `--hardware-compatibility ampere_plus` を指定すると Ampere 向けの互換エンジンも生成します
+- `--hardware-compatibility same_cc` は現行 GPU の Compute Capability 固有チューニング（Blackwell では `Same_Compute_Capability`）を別ファイル（例: `_same_compute_capability_fp16.engine`）として出力します
 - `--trt_dir` は任意ですが、`ditto_trt_blackwell/` を推奨（既存 Ampere エンジンと共存させる）
+- オプションを指定しない場合は GPU の Compute Capability から自動判別された互換レベル（例: RTX 5090 では `Blackwell_Plus`）が適用されます
+- 再生成時に上書きしたい場合は `--force` を追加してください
 - 生成された `.engine` は `streaming_server.py` が自動選択します
 
 ---

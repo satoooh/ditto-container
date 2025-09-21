@@ -38,6 +38,8 @@ git clone https://huggingface.co/digital-avatar/ditto-talkinghead .
 主要ファイル
 - `ditto_cfg/v0.4_hubert_cfg_trt_online.pkl` : ストリーミング用コンフィグ
 - `ditto_trt_Ampere_Plus/` : Ampere+ 向け TensorRT エンジン群（別 GPU の場合は `scripts/cvt_onnx_to_trt.py` で再生成）
+  - 例: `python scripts/cvt_onnx_to_trt.py --onnx_dir checkpoints/ditto_onnx --trt_dir checkpoints/ditto_trt_blackwell --hardware-compatibility ampere_plus --hardware-compatibility same_cc`
+  - `--force` を付与すると既存エンジンを上書きできます
 
 ## コンテナ内での推論ワークフロー
 ```bash

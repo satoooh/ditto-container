@@ -1,177 +1,127 @@
-import os
+# File: src/scripts/cvt_onnx_to_trt.py
+# Purpose: Convert Ditto ONNX graphs into TensorRT engines with hardware-aware settings.
+# Why: Build engines for multiple GPU generations while keeping GridSample fallbacks contained.
+
 import argparse
-import importlib
-import torch
+import os
+import subprocess
+from typing import Iterable, List, Optional
+
+from hardware_compat import (
+    HardwareSpec,
+    resolve_hardware_compatibility as _resolve_hardware_compatibility,
+    resolve_requested_hardware_levels as _resolve_requested_hardware_levels,
+)
+
+resolve_hardware_compatibility = _resolve_hardware_compatibility
+resolve_requested_hardware_levels = _resolve_requested_hardware_levels
+
+_FP32_MODELS = {"motion_extractor", "hubert", "wavlm"}
+_DYNAMIC_SHAPES = {
+    "wavlm": [
+        "--trt-min-shapes",
+        "audio:[1,1000]",
+        "--trt-max-shapes",
+        "audio:[1,320080]",
+        "--trt-opt-shapes",
+        "audio:[1,320080]",
+    ],
+    "hubert": [
+        "--trt-min-shapes",
+        "input_values:[1,3240]",
+        "--trt-max-shapes",
+        "input_values:[1,12960]",
+        "--trt-opt-shapes",
+        "input_values:[1,6480]",
+    ],
+}
+_GRID_SAMPLE_EXCLUDE = {
+    "SHAPE",
+    "ASSERTION",
+    "SHUFFLE",
+    "IDENTITY",
+    "CONSTANT",
+    "CONCATENATION",
+    "GATHER",
+    "SLICE",
+    "CONDITION",
+    "CONDITIONAL_INPUT",
+    "CONDITIONAL_OUTPUT",
+    "FILL",
+    "NON_ZERO",
+    "ONE_HOT",
+}
+_PLUGIN_MODEL = "warp_network"
+_SKIP_SUFFIX = "warp_network_ori"
 
 
-def _enum_members(enum_obj):
-    if hasattr(enum_obj, "__members__") and enum_obj.__members__:
-        return dict(enum_obj.__members__)
-
-    members = {}
-    for attr in dir(enum_obj):
-        if not attr or not attr[0].isupper():
-            continue
-        try:
-            members[attr] = getattr(enum_obj, attr)
-        except AttributeError:
-            continue
-    return members
-
-
-def _resolve_hardware_compatibility():
-    try:
-        import tensorrt as trt  # type: ignore
-    except ImportError:
-        return None, None
-
-    try:
-        enum_source = trt.HardwareCompatibilityLevel  # type: ignore[attr-defined]
-    except AttributeError:
-        enum_source = None
-
-    if enum_source is None:
-        try:
-            enum_source = getattr(
-                importlib.import_module("tensorrt.tensorrt"),
-                "HardwareCompatibilityLevel",
-                None,
-            )
-        except (ImportError, AttributeError):
-            enum_source = None
-
-    major, minor = torch.cuda.get_device_capability()
-
-    members = _enum_members(enum_source) if enum_source is not None else {}
-    ordered_levels = [
-        ("BLACKWELL", 12, None, None, None, "Blackwell_Plus"),
-        ("HOPPER", 9, 11, None, None, "Hopper_Plus"),
-        ("ADA", 8, 8, 9, None, "Ada"),
-        ("AMPERE", 8, 8, None, 8, "Ampere"),
-    ]
-
-    def _cli_name(enum_name: str) -> str:
-        return "--hardware-compatibility-level=" + "_".join(
-            part.capitalize() for part in enum_name.split("_")
-        )
-
-    fallback_flag = None
-
-    for prefix, min_major, max_major, min_minor, max_minor, fallback_cli in ordered_levels:
-        if major < min_major:
-            continue
-        if max_major is not None and major > max_major:
-            continue
-        if min_minor is not None and minor < min_minor:
-            continue
-        if max_minor is not None and minor > max_minor:
-            continue
-        if members:
-            candidates = [name for name in members if prefix in name]
-            if not candidates:
-                continue
-            candidates.sort(key=lambda name: (0 if name.endswith("PLUS") else 1, len(name)))
-            chosen = candidates[0]
-            return members[chosen], _cli_name(chosen)
-        fallback_flag = f"--hardware-compatibility-level={fallback_cli}"
-        break
-
-    return None, fallback_flag
-
-    major, _ = torch.cuda.get_device_capability()
-    members = _enum_members(trt.HardwareCompatibilityLevel)
-    if not members:
-        return None, None
-
-    ordered_prefixes = [
-        ("BLACKWELL", 12, None),
-        ("HOPPER", 9, 11),
-        ("ADA", 8, 8),
-        ("AMPERE", 8, 8),
-    ]
-
-    def _cli_name(enum_name: str) -> str:
-        return "--hardware-compatibility-level=" + "_".join(
-            part.capitalize() for part in enum_name.split("_")
-        )
-
-    for prefix, min_major, max_major in ordered_prefixes:
-        if major < min_major:
-            continue
-        if max_major is not None and major > max_major:
-            continue
-        candidates = [name for name in members if prefix in name]
-        if not candidates:
-            continue
-        candidates.sort(key=lambda name: (0 if name.endswith("PLUS") else 1, len(name)))
-        chosen = candidates[0]
-        return members[chosen], _cli_name(chosen)
-    return None, None
-
-
-def onnx_to_trt(onnx_file, trt_file, fp16=False, more_cmd=None):
-    _, compat_flag = _resolve_hardware_compatibility()
-    cmd = [
-        "polygraphy",
-        "convert",
-        onnx_file,
-        "-o",
-        trt_file,
-        "--fp16" if fp16 else "",
-        "--version-compatible",
-        "--onnx-flags",
-        "NATIVE_INSTANCENORM",
-        "--builder-optimization-level=5",
-    ]
-    if compat_flag:
-        cmd.insert(5, compat_flag)
+def onnx_to_trt(
+    onnx_file: str,
+    trt_file: str,
+    fp16: bool,
+    spec: HardwareSpec,
+    more_cmd: Optional[Iterable[str]] = None,
+) -> None:
+    cmd: List[str] = ["polygraphy", "convert", onnx_file, "-o", trt_file]
+    if fp16:
+        cmd.append("--fp16")
+    if spec.cli_flag:
+        cmd.append(spec.cli_flag)
+    cmd.extend(
+        [
+            "--version-compatible",
+            "--onnx-flags",
+            "NATIVE_INSTANCENORM",
+            "--builder-optimization-level=5",
+        ]
+    )
     if more_cmd:
         cmd.extend(more_cmd)
-    cmd = [arg for arg in cmd if arg]
-    print(" ".join(cmd))
-    os.system(" ".join(cmd))
+
+    printable = " ".join(cmd)
+    print(printable)
+    result = subprocess.run(cmd, check=False)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"polygraphy convert failed (exit code {result.returncode}) for {os.path.basename(onnx_file)}"
+        )
 
 
 def onnx_to_trt_for_gridsample(
-    onnx_file, trt_file, fp16=False, plugin_file="./libgrid_sample_3d_plugin.so"
-):
-    import tensorrt as trt
+    onnx_file: str,
+    trt_file: str,
+    fp16: bool,
+    spec: HardwareSpec,
+    plugin_file: str,
+) -> None:
+    if not os.path.isfile(plugin_file):
+        raise FileNotFoundError(f"GridSample plugin not found: {plugin_file}")
+
+    import tensorrt as trt  # local import to defer heavy dependency
 
     logger = trt.Logger(trt.Logger.INFO)
     trt.init_libnvinfer_plugins(logger, "")
-    plugin_libs = [plugin_file]
-
-    onnx_path = onnx_file
-    engine_path = trt_file
 
     builder = trt.Builder(logger)
-    for pluginlib in plugin_libs:
-        builder.get_plugin_registry().load_library(pluginlib)
+    builder.get_plugin_registry().load_library(plugin_file)
     network = builder.create_network(
         1 << int(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH)
     )
 
     parser = trt.OnnxParser(network, logger)
-    res = parser.parse_from_file(onnx_path)  # parse from file
-    if not res:
-        print(f"Fail parsing {onnx_path}")
-        for i in range(parser.num_errors):  # Get error information
-            error = parser.get_error(i)
-            print(error)  # Print error information
-            print(
-                f"{error.code() = }\n{error.file() = }\n{error.func() = }\n{error.line() = }\n{error.local_function_stack_size() = }"
-            )
-            print(
-                f"{error.local_function_stack() = }\n{error.node_name() = }\n{error.node_operator() = }\n{error.node() = }"
-            )
+    if not parser.parse_from_file(onnx_file):
+        errors = [str(parser.get_error(i)) for i in range(parser.num_errors)]
         parser.clear_errors()
+        raise RuntimeError(
+            f"TensorRT parser failed for {os.path.basename(onnx_file)}: {' | '.join(errors)}"
+        )
+
     config = builder.create_builder_config()
-    # config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, 1 << 32)
     config.builder_optimization_level = 5
-    # Set the flag of hardware compatibility, handled dynamically based on GPU capability
-    level_enum, _ = _resolve_hardware_compatibility()
-    if level_enum is not None:
-        config.hardware_compatibility_level = level_enum
+    if spec.enum_value is not None:
+        config.hardware_compatibility_level = spec.enum_value
+    elif spec.cli_flag:
+        print(f"[warn] Python bindings cannot apply {spec.cli_flag}; using default level")
 
     try:
         config.set_flag(trt.BuilderFlag.VERSION_COMPATIBLE)
@@ -181,94 +131,119 @@ def onnx_to_trt_for_gridsample(
     if fp16:
         config.set_flag(trt.BuilderFlag.FP16)
         config.set_flag(trt.BuilderFlag.PREFER_PRECISION_CONSTRAINTS)
-    config.set_preview_feature(trt.PreviewFeature.PROFILE_SHARING_0806, True)
-    exclude_list = [
-        "SHAPE",
-        "ASSERTION",
-        "SHUFFLE",
-        "IDENTITY",
-        "CONSTANT",
-        "CONCATENATION",
-        "GATHER",
-        "SLICE",
-        "CONDITION",
-        "CONDITIONAL_INPUT",
-        "CONDITIONAL_OUTPUT",
-        "FILL",
-        "NON_ZERO",
-        "ONE_HOT",
-    ]
-    for i in range(0, network.num_layers):
-        layer = network.get_layer(i)
-        if str(layer.type)[10:] in exclude_list:
+
+    try:
+        config.set_preview_feature(trt.PreviewFeature.PROFILE_SHARING_0806, True)
+    except AttributeError:
+        pass
+
+    for index in range(network.num_layers):
+        layer = network.get_layer(index)
+        if str(layer.type)[10:] in _GRID_SAMPLE_EXCLUDE:
             continue
         if "GridSample" in layer.name:
             print(f"set {layer.name} to float32")
             layer.precision = trt.float32
-    config.plugins_to_serialize = plugin_libs
-    engineString = builder.build_serialized_network(network, config)
-    if engineString is not None:
-        with open(engine_path, "wb") as f:
-            f.write(engineString)
 
-
-def main(onnx_dir, trt_dir, grid_sample_plugin_file=""):
-    names = [i[:-5] for i in os.listdir(onnx_dir) if i.endswith(".onnx")]
-    for name in names:
-        if name == "warp_network_ori":
-            continue
-
-        print("=" * 20, f"{name} start", "=" * 20)
-
-        fp16 = (
-            False
-            if name in {"motion_extractor", "hubert", "wavlm"}
-            or name.startswith("lmdm")
-            else True
+    engine_blob = builder.build_serialized_network(network, config)
+    if engine_blob is None:
+        raise RuntimeError(
+            f"TensorRT failed to build engine for {os.path.basename(onnx_file)} using plugin fallback"
         )
 
-        more_cmd = None
-        if name == "wavlm":
-            more_cmd = [
-                "--trt-min-shapes audio:[1,1000]",
-                "--trt-max-shapes audio:[1,320080]",
-                "--trt-opt-shapes audio:[1,320080]",
-            ]
-        elif name == "hubert":
-            more_cmd = [
-                "--trt-min-shapes input_values:[1,3240]",
-                "--trt-max-shapes input_values:[1,12960]",
-                "--trt-opt-shapes input_values:[1,6480]",
-            ]
+    with open(trt_file, "wb") as handle:
+        handle.write(engine_blob)
 
-        onnx_file = f"{onnx_dir}/{name}.onnx"
-        trt_file = f"{trt_dir}/{name}_fp{16 if fp16 else 32}.engine"
 
-        if os.path.isfile(trt_file):
-            print("=" * 20, f"{name} skip", "=" * 20)
-            continue
+def main(
+    onnx_dir: str,
+    trt_dir: str,
+    plugin_path: Optional[str],
+    compat_options: Optional[List[str]],
+    force: bool,
+) -> None:
+    names = sorted(i[:-5] for i in os.listdir(onnx_dir) if i.endswith(".onnx"))
+    specs = _resolve_requested_hardware_levels(compat_options or [])
+    plugin_available = plugin_path and os.path.isfile(plugin_path)
 
-        if name == "warp_network":
-            onnx_to_trt_for_gridsample(
-                onnx_file, trt_file, fp16, plugin_file=grid_sample_plugin_file
+    for spec in specs:
+        print("=" * 10, f"hardware target: {spec.key}", "=" * 10)
+        for name in names:
+            if name == _SKIP_SUFFIX:
+                continue
+
+            fp16 = name not in _FP32_MODELS and not name.startswith("lmdm")
+            more_cmd = _DYNAMIC_SHAPES.get(name)
+            onnx_file = os.path.join(onnx_dir, f"{name}.onnx")
+            trt_file = os.path.join(
+                trt_dir, f"{name}{spec.suffix}_fp{16 if fp16 else 32}.engine"
             )
-        else:
-            onnx_to_trt(onnx_file, trt_file, fp16, more_cmd=more_cmd)
 
-        print("=" * 20, f"{name} done", "=" * 20)
+            if not force and os.path.isfile(trt_file):
+                print(f"[skip] {os.path.basename(trt_file)} already present")
+                continue
+
+            print(f"[build] {name} -> {os.path.basename(trt_file)} ({spec.key})")
+            try:
+                onnx_to_trt(onnx_file, trt_file, fp16, spec, more_cmd=more_cmd)
+            except RuntimeError as exc:
+                if name == _PLUGIN_MODEL and plugin_available:
+                    print("[fallback] retrying with GridSample plugin")
+                    onnx_to_trt_for_gridsample(
+                        onnx_file,
+                        trt_file,
+                        fp16,
+                        spec,
+                        plugin_path or "",
+                    )
+                else:
+                    raise RuntimeError(f"{name}: {exc}") from exc
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--onnx_dir", type=str, help="input onnx dir")
-    parser.add_argument("--trt_dir", type=str, help="output trt dir")
+    parser.add_argument("--onnx_dir", type=str, required=True, help="input onnx dir")
+    parser.add_argument("--trt_dir", type=str, required=True, help="output trt dir")
+    parser.add_argument(
+        "--hardware-compatibility",
+        action="append",
+        choices=(
+            "auto",
+            "none",
+            "ampere_plus",
+            "blackwell_plus",
+            "hopper_plus",
+            "ada",
+            "same_cc",
+            "same_compute_capability",
+        ),
+        help="Repeat to emit additional hardware compatibility targets (default: auto)",
+    )
+    parser.add_argument(
+        "--grid-sample-plugin",
+        type=str,
+        default=None,
+        help="Path to libgrid_sample_3d_plugin.so for fallback builds",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Rebuild engines even if output files already exist",
+    )
+
     args = parser.parse_args()
+    if not os.path.isdir(args.onnx_dir):
+        raise FileNotFoundError(f"ONNX directory not found: {args.onnx_dir}")
+    os.makedirs(args.trt_dir, exist_ok=True)
 
-    onnx_dir = args.onnx_dir
-    trt_dir = args.trt_dir
+    plugin_path = args.grid_sample_plugin or os.path.join(
+        args.onnx_dir, "libgrid_sample_3d_plugin.so"
+    )
 
-    assert os.path.isdir(onnx_dir)
-    os.makedirs(trt_dir, exist_ok=True)
-
-    grid_sample_plugin_file = os.path.join(onnx_dir, "libgrid_sample_3d_plugin.so")
-    main(onnx_dir, trt_dir, grid_sample_plugin_file)
+    main(
+        args.onnx_dir,
+        args.trt_dir,
+        plugin_path,
+        args.hardware_compatibility,
+        args.force,
+    )
