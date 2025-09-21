@@ -16,6 +16,28 @@ from hardware_compat import (
 resolve_hardware_compatibility = _resolve_hardware_compatibility
 resolve_requested_hardware_levels = _resolve_requested_hardware_levels
 
+
+def _ensure_tensorrt_symbols() -> None:
+    try:
+        import tensorrt as trt  # type: ignore
+    except ImportError:
+        return
+
+    if hasattr(trt, "OnnxParserFlag") and hasattr(trt, "BuilderFlag"):
+        return
+
+    try:
+        bindings = __import__("tensorrt.tensorrt", fromlist=["__name__"])
+    except Exception:
+        return
+
+    for attr in ("OnnxParserFlag", "BuilderFlag", "PreviewFeature", "Logger"):
+        if hasattr(bindings, attr) and not hasattr(trt, attr):
+            setattr(trt, attr, getattr(bindings, attr))
+
+
+_ensure_tensorrt_symbols()
+
 _FP32_MODELS = {"motion_extractor", "hubert", "wavlm"}
 _DYNAMIC_SHAPES = {
     "wavlm": [
