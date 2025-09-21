@@ -4,10 +4,27 @@
 
 import importlib
 import re
+import sys
 from dataclasses import dataclass, replace
 from typing import Dict, List, Optional, Sequence, Tuple
 
-import torch
+try:
+    import torch
+except ImportError:  # pragma: no cover - fallback for environments without torch
+    class _FallbackCuda:
+        @staticmethod
+        def is_available() -> bool:
+            return False
+
+        @staticmethod
+        def get_device_capability() -> Tuple[int, int]:
+            raise RuntimeError("CUDA capability unavailable: torch not installed")
+
+    class _FallbackTorch:
+        cuda = _FallbackCuda()
+
+    torch = _FallbackTorch()  # type: ignore
+    sys.modules.setdefault("torch", torch)
 
 
 @dataclass(frozen=True)
