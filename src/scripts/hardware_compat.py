@@ -4,7 +4,6 @@
 
 import importlib
 import re
-import sys
 from dataclasses import dataclass, replace
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -24,7 +23,6 @@ except ImportError:  # pragma: no cover - fallback for environments without torc
         cuda = _FallbackCuda()
 
     torch = _FallbackTorch()  # type: ignore
-    sys.modules.setdefault("torch", torch)
 
 
 @dataclass(frozen=True)

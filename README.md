@@ -42,7 +42,7 @@ sudo docker login nvcr.io
 ```
 `./setup.sh` は以下を実行します。
 - `checkpoints/`,`data/`,`output/` の作成
-- NGC ベースの `nvcr.io/nvidia/tensorrt:25.08-py3` を元に CUDA 12.9 + TensorRT 10.13.3 をセットアップ（`pip install --extra-index-url https://pypi.nvidia.com tensorrt==10.13.3.9 tensorrt-cu13==10.13.3.9 tensorrt-cu13-bindings==10.13.3.9 tensorrt-cu13-libs==10.13.3.9`）
+- NGC ベースの `nvcr.io/nvidia/tensorrt:25.08-py3` を元に CUDA 12.9 + TensorRT 10.13.3 を利用（画像側の TensorRT をそのまま使用し、pip での上書きは行いません）
 - Docker Compose v2 → v1 → plain docker の順に起動を試行
 - fallback 時は `bash -lc 'sleep infinity'` でコンテナ終了を防止
 
@@ -76,6 +76,7 @@ python src/scripts/cvt_onnx_to_trt.py \
 - `--trt_dir` は任意ですが、`ditto_trt_blackwell/` を推奨（既存 Ampere エンジンと共存させる）
 - オプションを指定しない場合は GPU の Compute Capability から自動判別された互換レベル（例: RTX 5090 では `Blackwell_Plus`）が適用されます
 - 再生成時に上書きしたい場合は `--force` を追加してください
+- Polygraphy CLI を使って旧来のフローを維持したい場合は `--use-polygraphy` を付与するか、環境変数 `DITTO_USE_POLYGRAPHY=1` を設定して実行します
 - 生成された `.engine` は `streaming_server.py` が自動選択します
 
 ---

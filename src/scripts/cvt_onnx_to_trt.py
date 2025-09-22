@@ -4,6 +4,7 @@
 
 import argparse
 import os
+import subprocess
 from typing import Dict, List, Optional, Tuple
 
 try:
@@ -43,6 +44,16 @@ def _ensure_tensorrt_symbols() -> None:
 
 
 _ensure_tensorrt_symbols()
+
+_ENV_USE_POLYGRAPHY = "DITTO_USE_POLYGRAPHY"
+_DEFAULT_WORKSPACE_LIMIT = 4 << 30
+
+
+def _is_truthy(value: Optional[str]) -> bool:
+    if value is None:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
 
 _FP32_MODELS = {"motion_extractor", "hubert", "wavlm"}
 _DYNAMIC_PROFILES: Dict[str, Dict[str, Tuple[Tuple[int, ...], Tuple[int, ...], Tuple[int, ...]]]] = {
@@ -97,6 +108,10 @@ def _build_engine(
     )
 
     parser = trt.OnnxParser(network, logger)
+    try:
+        parser.set_flag(trt.OnnxParserFlag.NATIVE_INSTANCENORM)
+    except AttributeError:
+        pass
     if not parser.parse_from_file(onnx_file):
         errors = [str(parser.get_error(i)) for i in range(parser.num_errors)]
         parser.clear_errors()
@@ -106,6 +121,10 @@ def _build_engine(
 
     config = builder.create_builder_config()
     config.builder_optimization_level = 5
+    try:
+        config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, _DEFAULT_WORKSPACE_LIMIT)
+    except AttributeError:
+        pass
     if spec.enum_value is not None:
         config.hardware_compatibility_level = spec.enum_value
     elif spec.cli_flag:
@@ -128,14 +147,17 @@ def _build_engine(
     except AttributeError:
         pass
 
-    if plugin_file:
-        for index in range(network.num_layers):
-            layer = network.get_layer(index)
-            if str(layer.type)[10:] in _GRID_SAMPLE_EXCLUDE:
-                continue
-            if "GridSample" in layer.name:
-                print(f"set {layer.name} to float32")
-                layer.precision = trt.float32
+    grid_layers = []
+    for index in range(network.num_layers):
+        layer = network.get_layer(index)
+        if str(layer.type)[10:] in _GRID_SAMPLE_EXCLUDE:
+            continue
+        if "GridSample" in layer.name:
+            grid_layers.append(layer)
+
+    for layer in grid_layers:
+        print(f"set {layer.name} to float32")
+        layer.precision = trt.float32
 
     if profile_shapes:
         profile = builder.create_optimization_profile()
@@ -170,16 +192,98 @@ def _build_engine(
         handle.write(engine_blob)
 
 
+
+
+def _format_shape(shape: Tuple[int, ...]) -> str:
+    return "[" + ",".join(str(dim) for dim in shape) + "]"
+
+
+def _polygraphy_command(
+    onnx_file: str,
+    trt_file: str,
+    fp16: bool,
+    spec: HardwareSpec,
+    profile_shapes: Optional[Dict[str, Tuple[Tuple[int, ...], Tuple[int, ...], Tuple[int, ...]]]] = None,
+    plugin_file: Optional[str] = None,
+) -> List[str]:
+    cmd: List[str] = [
+        "polygraphy",
+        "convert",
+        onnx_file,
+        "-o",
+        trt_file,
+    ]
+
+    if fp16:
+        cmd.append("--fp16")
+    if spec.cli_flag:
+        cmd.append(spec.cli_flag)
+
+    cmd.extend(
+        [
+            "--version-compatible",
+            "--onnx-flags",
+            "NATIVE_INSTANCENORM",
+            "--builder-optimization-level=5",
+        ]
+    )
+
+    if profile_shapes:
+        for tensor_name, (min_shape, opt_shape, max_shape) in profile_shapes.items():
+            cmd.extend(
+                [
+                    "--trt-min-shapes",
+                    f"{tensor_name}:{_format_shape(min_shape)}",
+                    "--trt-opt-shapes",
+                    f"{tensor_name}:{_format_shape(opt_shape)}",
+                    "--trt-max-shapes",
+                    f"{tensor_name}:{_format_shape(max_shape)}",
+                ]
+            )
+
+    if plugin_file:
+        cmd.extend(["--plugins", plugin_file])
+
+    return cmd
+
+
+def _polygraphy_convert(
+    onnx_file: str,
+    trt_file: str,
+    fp16: bool,
+    spec: HardwareSpec,
+    profile_shapes: Optional[Dict[str, Tuple[Tuple[int, ...], Tuple[int, ...], Tuple[int, ...]]]] = None,
+    plugin_file: Optional[str] = None,
+) -> None:
+    cmd = _polygraphy_command(
+        onnx_file,
+        trt_file,
+        fp16,
+        spec,
+        profile_shapes=profile_shapes,
+        plugin_file=plugin_file,
+    )
+    printable = " ".join(cmd)
+    print(printable)
+    result = subprocess.run(cmd, check=False)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"polygraphy convert failed (exit code {result.returncode}) for {os.path.basename(onnx_file)}"
+        )
+
 def main(
     onnx_dir: str,
     trt_dir: str,
     plugin_path: Optional[str],
     compat_options: Optional[List[str]],
     force: bool,
+    use_polygraphy: bool,
 ) -> None:
     names = sorted(i[:-5] for i in os.listdir(onnx_dir) if i.endswith(".onnx"))
     specs = _resolve_requested_hardware_levels(compat_options or [])
-    plugin_available = plugin_path and os.path.isfile(plugin_path)
+    plugin_available = bool(plugin_path and os.path.isfile(plugin_path))
+    if plugin_path and not plugin_available:
+        print(f"[warn] GridSample plugin not found at {plugin_path}; proceeding without it")
 
     for spec in specs:
         print("=" * 10, f"hardware target: {spec.key}", "=" * 10)
@@ -200,24 +304,43 @@ def main(
 
             print(f"[build] {name} -> {os.path.basename(trt_file)} ({spec.key})")
             try:
-                _build_engine(
-                    onnx_file,
-                    trt_file,
-                    fp16,
-                    spec,
-                    profile_shapes=profile_shapes,
-                )
-            except RuntimeError as exc:
-                if name == _PLUGIN_MODEL and plugin_available:
-                    print("[fallback] retrying with GridSample plugin")
+                if use_polygraphy:
+                    _polygraphy_convert(
+                        onnx_file,
+                        trt_file,
+                        fp16,
+                        spec,
+                        profile_shapes=profile_shapes,
+                    )
+                else:
                     _build_engine(
                         onnx_file,
                         trt_file,
                         fp16,
                         spec,
                         profile_shapes=profile_shapes,
-                        plugin_file=plugin_path,
                     )
+            except RuntimeError as exc:
+                if name == _PLUGIN_MODEL and plugin_available:
+                    print("[fallback] retrying with GridSample plugin")
+                    if use_polygraphy:
+                        _polygraphy_convert(
+                            onnx_file,
+                            trt_file,
+                            fp16,
+                            spec,
+                            profile_shapes=profile_shapes,
+                            plugin_file=plugin_path,
+                        )
+                    else:
+                        _build_engine(
+                            onnx_file,
+                            trt_file,
+                            fp16,
+                            spec,
+                            profile_shapes=profile_shapes,
+                            plugin_file=plugin_path,
+                        )
                 else:
                     raise RuntimeError(f"{name}: {exc}") from exc
 
@@ -252,11 +375,19 @@ if __name__ == "__main__":
         action="store_true",
         help="Rebuild engines even if output files already exist",
     )
+    parser.add_argument(
+        "--use-polygraphy",
+        action="store_true",
+        help="Use polygraphy CLI instead of the TensorRT Python API",
+    )
 
     args = parser.parse_args()
     if not os.path.isdir(args.onnx_dir):
         raise FileNotFoundError(f"ONNX directory not found: {args.onnx_dir}")
     os.makedirs(args.trt_dir, exist_ok=True)
+
+    env_use_polygraphy = _is_truthy(os.environ.get(_ENV_USE_POLYGRAPHY))
+    use_polygraphy = args.use_polygraphy or env_use_polygraphy
 
     plugin_path = args.grid_sample_plugin or os.path.join(
         args.onnx_dir, "libgrid_sample_3d_plugin.so"
@@ -268,4 +399,5 @@ if __name__ == "__main__":
         plugin_path,
         args.hardware_compatibility,
         args.force,
+        use_polygraphy,
     )

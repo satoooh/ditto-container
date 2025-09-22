@@ -42,13 +42,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN python -m pip install --upgrade pip
 
-RUN pip install --no-cache-dir \
-    --extra-index-url https://pypi.nvidia.com \
-    "tensorrt==10.13.3.9" \
-    "tensorrt-cu13==10.13.3.9" \
-    "tensorrt-cu13-bindings==10.13.3.9" \
-    "tensorrt-cu13-libs==10.13.3.9"
-
 ENV PIP_EXTRA_INDEX_URL=https://pypi.org/simple
 
 RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
@@ -84,8 +77,6 @@ def _ensure_trt_bindings():
     if module is not None and hasattr(module, 'Logger') and hasattr(module, 'OnnxParserFlag'):
         return
     for candidate in (
-        'tensorrt_bindings',
-        'tensorrt_cu13_bindings',
         'tensorrt.tensorrt',
     ):
         try:

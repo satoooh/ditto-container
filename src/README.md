@@ -40,6 +40,7 @@ git clone https://huggingface.co/digital-avatar/ditto-talkinghead .
 - `ditto_trt_Ampere_Plus/` : Ampere+ 向け TensorRT エンジン群（別 GPU の場合は `scripts/cvt_onnx_to_trt.py` で再生成）
   - 例: `python scripts/cvt_onnx_to_trt.py --onnx_dir checkpoints/ditto_onnx --trt_dir checkpoints/ditto_trt_blackwell --hardware-compatibility ampere_plus --hardware-compatibility same_cc`
   - `--force` を付与すると既存エンジンを上書きできます
+  - Polygraphy CLI を使う場合は `--use-polygraphy` を付与するか、`DITTO_USE_POLYGRAPHY=1` を設定して実行します
 
 ## コンテナ内での推論ワークフロー
 ```bash
