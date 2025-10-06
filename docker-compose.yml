@@ -12,8 +12,7 @@ services:
       - ./checkpoints:/app/checkpoints
       - ./output:/app/output
     working_dir: /app
-    ports:
-      - "8000:8000"
+    network_mode: host
     stdin_open: true
     tty: true
     deploy:

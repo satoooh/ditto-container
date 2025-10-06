@@ -4,11 +4,13 @@ import argparse
 import asyncio
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 import aiohttp
 from aiortc import RTCPeerConnection, RTCSessionDescription
 from aiortc.contrib.media import MediaRecorder, MediaRelay
+from aiortc.mediastreams import MediaStreamError
 
 
 @dataclass
@@ -38,24 +40,38 @@ class StreamStats:
 
 async def run_client(args: argparse.Namespace) -> None:
     pc = RTCPeerConnection()
-    recorder: Optional[MediaRecorder] = (
-        MediaRecorder(args.record_file) if args.record_file else None
-    )
     relay = MediaRelay()
     stats = StreamStats()
 
+    recorder: Optional[MediaRecorder] = None
+    if args.record_file:
+        record_path = Path(args.record_file)
+        suffix = record_path.suffix.lower()
+        if suffix == ".webm":
+            recorder = MediaRecorder(
+                args.record_file,
+                format="webm",
+                video_codec="vp8",
+                audio_codec="opus",
+            )
+        else:
+            recorder = MediaRecorder(args.record_file)
+
     @pc.on("track")
     def on_track(track):
-        if recorder:
-            recorder.addTrack(relay.subscribe(track))
+        subscribed_track = relay.subscribe(track)
 
-        consume_track = relay.subscribe(track) if recorder else track
+        if recorder:
+            recorder.addTrack(subscribed_track)
 
         async def consume() -> None:
-            while True:
-                _ = await consume_track.recv()
-                if track.kind == "video":
-                    stats.register_frame()
+            try:
+                while True:
+                    _ = await subscribed_track.recv()
+                    if track.kind == "video":
+                        stats.register_frame()
+            except MediaStreamError:
+                pass
 
         asyncio.create_task(consume())
 

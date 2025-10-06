@@ -75,6 +75,7 @@ pip install -r requirements-dev.txt
 ```
 
 Docker コンテナを使う場合は `./setup.sh all` を再実行してイメージを再ビルドしてください（Dockerfile に WebRTC 依存を追加済み）。
+`docker-compose.yml` は `network_mode: host` を利用するよう変更済みなので、外部アクセス時にもホストのパブリック IP が ICE 候補として利用されます。
 
 ### 4-3. サーバー起動
 ```bash
