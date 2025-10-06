@@ -20,7 +20,13 @@ import numpy as np
 import websockets
 from websockets.exceptions import ConnectionClosed
 
-from streaming_config import clamp_sampling_timesteps, parse_chunk_config, to_chunk_list
+from streaming_config import (
+    clamp_quality,
+    clamp_sampling_timesteps,
+    clamp_scale,
+    parse_chunk_config,
+    to_chunk_list,
+)
 from streaming_protocol import parse_binary_frame
 
 try:
@@ -894,20 +900,44 @@ async def main():
     parser.add_argument(
         "--sampling-timesteps",
         type=int,
-        default=30,
-        help="Diffusion sampling steps for audio2motion (lower is faster).",
+        default=None,
+        help="Override diffusion sampling steps (lower is faster).",
     )
     parser.add_argument(
         "--chunk-config",
         type=str,
-        default="3,5,2",
-        help="Comma separated chunk sizes pre,main,post (e.g. 3,5,2).",
+        default=None,
+        help="Override chunk sizes pre,main,post (e.g. 3,5,2).",
     )
     parser.add_argument(
         "--chunk-sleep-ms",
         type=float,
-        default=0.0,
-        help="Optional sleep between chunk submissions to server (milliseconds).",
+        default=None,
+        help="Sleep between chunk submissions in milliseconds (online mode only).",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["offline", "online"],
+        default="offline",
+        help="Select inference mode (offline batches or online streaming).",
+    )
+    parser.add_argument(
+        "--frame-quality",
+        type=int,
+        default=None,
+        help="Override base WebP quality (10-100).",
+    )
+    parser.add_argument(
+        "--min-frame-quality",
+        type=int,
+        default=None,
+        help="Override minimum quality when queue backs up (10-100).",
+    )
+    parser.add_argument(
+        "--frame-scale",
+        type=float,
+        default=None,
+        help="Uniform scaling factor (0.1-1.0) applied before encoding.",
     )
 
     args = parser.parse_args()
@@ -924,21 +954,39 @@ async def main():
 
     try:
         # Start streaming
-        chunk_tuple = parse_chunk_config(args.chunk_config)
-        sampling_steps = clamp_sampling_timesteps(args.sampling_timesteps)
-        chunk_sleep_s = max(0.0, args.chunk_sleep_ms / 1000.0)
+        chunk_tuple = (
+            parse_chunk_config(args.chunk_config) if args.chunk_config else (3, 5, 2)
+        )
+
+        setup_kwargs: Dict[str, Any] = {}
+        run_kwargs: Dict[str, Any] = {
+            "chunksize": to_chunk_list(chunk_tuple),
+            "fade_in": -1,
+            "fade_out": -1,
+        }
+
+        setup_kwargs["online_mode"] = args.mode == "online"
+
+        if args.sampling_timesteps is not None:
+            sampling_steps = clamp_sampling_timesteps(args.sampling_timesteps)
+            setup_kwargs["sampling_timesteps"] = sampling_steps
+            run_kwargs["sampling_timesteps"] = sampling_steps
+
+        if args.chunk_sleep_ms is not None:
+            run_kwargs["chunk_sleep_s"] = max(0.0, args.chunk_sleep_ms / 1000.0)
+
+        if args.frame_quality is not None:
+            run_kwargs["frame_quality"] = clamp_quality(args.frame_quality)
+        if args.min_frame_quality is not None:
+            run_kwargs["frame_quality_min"] = clamp_quality(
+                args.min_frame_quality, default=60
+            )
+        if args.frame_scale is not None:
+            run_kwargs["frame_scale"] = clamp_scale(args.frame_scale)
 
         streaming_config = {
-            "setup_kwargs": {
-                "sampling_timesteps": sampling_steps,
-            },
-            "run_kwargs": {
-                "chunksize": to_chunk_list(chunk_tuple),
-                "sampling_timesteps": sampling_steps,
-                "chunk_sleep_s": chunk_sleep_s,
-                "fade_in": -1,
-                "fade_out": -1,
-            },
+            "setup_kwargs": setup_kwargs,
+            "run_kwargs": run_kwargs,
         }
 
         if not await client.start_streaming(

@@ -18,7 +18,12 @@ from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from stream_pipeline_online import StreamSDK
-from streaming_config import clamp_sampling_timesteps, parse_chunk_config
+from streaming_config import (
+    clamp_quality,
+    clamp_sampling_timesteps,
+    clamp_scale,
+    parse_chunk_config,
+)
 from streaming_protocol import build_binary_frame_payload
 
 # Configure logging
@@ -26,7 +31,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 DEFAULT_QUEUE_SIZE = 50
-DEFAULT_CHUNK_SLEEP = 0.0
+DEFAULT_CHUNK_SLEEP = 0.01
 
 
 class StreamingServer:
@@ -35,9 +40,13 @@ class StreamingServer:
         cfg_pkl: str,
         data_root: str,
         *,
-        default_chunk_config: tuple[int, int, int] = (3, 5, 2),
-        default_sampling_steps: int = 30,
-        chunk_sleep_s: float = DEFAULT_CHUNK_SLEEP,
+        default_chunk_config: tuple[int, int, int] | None = (3, 5, 2),
+        default_sampling_steps: int | None = None,
+        chunk_sleep_s: float | None = DEFAULT_CHUNK_SLEEP,
+        frame_quality: int | None = None,
+        frame_quality_min: int | None = None,
+        frame_scale: float | None = None,
+        frame_format: str | None = None,
     ):
         self.cfg_pkl = cfg_pkl
         self.data_root = data_root
@@ -49,7 +58,23 @@ class StreamingServer:
         self._queue_depth_lock = threading.Lock()
         self.default_chunk_config = default_chunk_config
         self.default_sampling_steps = default_sampling_steps
-        self.default_chunk_sleep_s = max(0.0, chunk_sleep_s)
+        self.default_chunk_sleep_s = (
+            max(0.0, chunk_sleep_s) if chunk_sleep_s is not None else None
+        )
+        self.default_frame_quality = (
+            clamp_quality(frame_quality) if frame_quality is not None else None
+        )
+        self.default_frame_quality_min = (
+            clamp_quality(frame_quality_min, default=60)
+            if frame_quality_min is not None
+            else None
+        )
+        self.default_frame_scale = (
+            clamp_scale(frame_scale) if frame_scale is not None else None
+        )
+        self.default_frame_format = (
+            frame_format if frame_format in {"webp", "jpeg"} else None
+        )
 
         # Initialize FastAPI app
         self.app = FastAPI(title="Ditto Streaming Server", version="1.0.0")
@@ -454,6 +479,7 @@ class StreamingServer:
             "start_time": time.time(),
             "frame_count": 0,
             "prefer_binary": prefer_binary,
+            "frame_options": {},
         }
         logger.info(f"Added client {client_id} to active_streams")
 
@@ -630,11 +656,21 @@ class StreamingServer:
 
             # Setup the pipeline with custom writer
             setup_kwargs = dict(config.get("setup_kwargs", {}))
-            sampling_timesteps = clamp_sampling_timesteps(
-                setup_kwargs.get("sampling_timesteps"),
-                default=self.default_sampling_steps,
-            )
-            setup_kwargs["sampling_timesteps"] = sampling_timesteps
+            sampling_override = setup_kwargs.get("sampling_timesteps")
+            if sampling_override is None and self.default_sampling_steps is not None:
+                sampling_override = self.default_sampling_steps
+
+            sampling_timesteps: int | None = None
+            if sampling_override is not None:
+                sampling_timesteps = clamp_sampling_timesteps(
+                    sampling_override,
+                    default=self.default_sampling_steps
+                    if self.default_sampling_steps is not None
+                    else 30,
+                )
+                setup_kwargs["sampling_timesteps"] = sampling_timesteps
+            else:
+                setup_kwargs.pop("sampling_timesteps", None)
             # Use a temporary output path (won't be used since we replace the writer)
             temp_output_path = f"/tmp/streaming_output_{client_id}.mp4"
 
@@ -676,15 +712,74 @@ class StreamingServer:
             fade_in = run_kwargs.get("fade_in", -1)
             fade_out = run_kwargs.get("fade_out", -1)
             ctrl_info = run_kwargs.get("ctrl_info", {})
+
+            chunk_override = run_kwargs.get("chunksize")
+            if chunk_override is None and self.default_chunk_config is not None:
+                chunk_override = self.default_chunk_config
             chunksize_tuple = parse_chunk_config(
-                run_kwargs.get("chunksize", self.default_chunk_config),
-                fallback=self.default_chunk_config,
+                chunk_override if chunk_override is not None else (3, 5, 2),
+                fallback=self.default_chunk_config
+                if self.default_chunk_config
+                else (3, 5, 2),
             )
             run_kwargs["chunksize"] = chunksize_tuple
-            # Ensure run_kwargs carries the same sampling value so SDK.run_chunk can refer to it if needed
-            run_kwargs["sampling_timesteps"] = sampling_timesteps
-            chunk_sleep_s = run_kwargs.get("chunk_sleep_s", self.default_chunk_sleep_s)
-            chunk_sleep_s = max(0.0, float(chunk_sleep_s))
+
+            if sampling_timesteps is not None:
+                run_kwargs["sampling_timesteps"] = sampling_timesteps
+            else:
+                run_kwargs.pop("sampling_timesteps", None)
+
+            chunk_sleep_override = run_kwargs.get("chunk_sleep_s")
+            if chunk_sleep_override is None and self.default_chunk_sleep_s is not None:
+                chunk_sleep_override = self.default_chunk_sleep_s
+
+            if chunk_sleep_override is not None:
+                chunk_sleep_s = max(0.0, float(chunk_sleep_override))
+                run_kwargs["chunk_sleep_s"] = chunk_sleep_s
+            else:
+                chunk_sleep_s = None
+                run_kwargs.pop("chunk_sleep_s", None)
+
+            base_quality = run_kwargs.get("frame_quality")
+            if base_quality is None and self.default_frame_quality is not None:
+                base_quality = self.default_frame_quality
+            base_quality = (
+                clamp_quality(base_quality, default=85)
+                if base_quality is not None
+                else 85
+            )
+
+            min_quality = run_kwargs.get("frame_quality_min")
+            if min_quality is None and self.default_frame_quality_min is not None:
+                min_quality = self.default_frame_quality_min
+            min_quality = (
+                clamp_quality(min_quality, default=60)
+                if min_quality is not None
+                else max(10, min(75, base_quality - 20))
+            )
+            min_quality = min(min_quality, base_quality)
+
+            frame_scale = run_kwargs.get("frame_scale")
+            if frame_scale is None and self.default_frame_scale is not None:
+                frame_scale = self.default_frame_scale
+            frame_scale = clamp_scale(frame_scale) if frame_scale is not None else 1.0
+
+            frame_format = run_kwargs.get("frame_format")
+            if frame_format not in {"webp", "jpeg"}:
+                frame_format = (
+                    self.default_frame_format
+                    if self.default_frame_format in {"webp", "jpeg"}
+                    else "webp"
+                )
+
+            stream_state = self.active_streams.get(client_id)
+            if stream_state is not None:
+                stream_state["frame_options"] = {
+                    "base_quality": base_quality,
+                    "min_quality": min_quality,
+                    "scale": frame_scale,
+                    "format": frame_format,
+                }
 
             logger.info(f"About to call SDK.setup_Nd() for client {client_id}")
             SDK.setup_Nd(
@@ -746,8 +841,11 @@ class StreamingServer:
                         None, SDK.run_chunk, audio_chunk, chunksize
                     )
 
-                    if chunk_sleep_s:
-                        await asyncio.sleep(chunk_sleep_s)
+                    if chunk_sleep_s is not None:
+                        if chunk_sleep_s > 0:
+                            await asyncio.sleep(chunk_sleep_s)
+                    elif self.default_chunk_sleep_s:
+                        await asyncio.sleep(self.default_chunk_sleep_s)
             else:
                 # Offline mode
                 logger.info(f"Running offline mode for client {client_id}")
@@ -847,18 +945,47 @@ class WebSocketFrameWriter:
         else:
             frame_bgr = frame_rgb
 
+        stream_state = self.server.active_streams.get(self.client_id, {})
+        frame_opts = stream_state.get(
+            "frame_options",
+            {"base_quality": 85, "min_quality": 60, "scale": 1.0, "format": "webp"},
+        )
+
+        base_quality = int(frame_opts.get("base_quality", 85))
+        min_quality = int(frame_opts.get("min_quality", 60))
+        min_quality = min(base_quality, max(10, min_quality))
+        scale = float(frame_opts.get("scale", 1.0))
+        frame_format = frame_opts.get("format", "webp")
+
+        if not (0.999 <= scale <= 1.001):
+            h, w = frame_bgr.shape[:2]
+            new_size = (max(1, int(w * scale)), max(1, int(h * scale)))
+            if new_size != (w, h):
+                frame_bgr = cv2.resize(
+                    frame_bgr, new_size, interpolation=cv2.INTER_AREA
+                )
+
         queue_depth = self.server.get_queue_depth(self.client_id)
         if queue_depth > DEFAULT_QUEUE_SIZE * 0.8:
-            quality = 60
+            quality = max(min_quality, int(base_quality * 0.7))
         elif queue_depth > DEFAULT_QUEUE_SIZE * 0.5:
-            quality = 75
+            quality = max(min_quality, int(base_quality * 0.85))
         else:
-            quality = 85
+            quality = base_quality
 
-        # Encode frame as WebP (adaptive品質)
-        _, buffer = cv2.imencode(
-            ".webp", frame_bgr, [cv2.IMWRITE_WEBP_QUALITY, quality]
-        )
+        if frame_format == "jpeg":
+            encode_ext = ".jpg"
+            encode_params = [cv2.IMWRITE_JPEG_QUALITY, quality]
+        else:
+            encode_ext = ".webp"
+            encode_params = [cv2.IMWRITE_WEBP_QUALITY, quality]
+
+        success, buffer = cv2.imencode(encode_ext, frame_bgr, encode_params)
+        if not success:
+            logger.warning(
+                f"Failed to encode frame {self.frame_count} for {self.client_id}; dropping"
+            )
+            return
         image_bytes = buffer.tobytes()
 
         # Send frame via WebSocket using queue
@@ -873,7 +1000,7 @@ class WebSocketFrameWriter:
         if self.frame_count % 100 == 0:
             logger.info(
                 f"Enqueued frame {self.frame_count} for {self.client_id} "
-                f"(WebP quality={quality}%, queue≈{queue_depth})"
+                f"({frame_format.upper()} quality={quality}%, queue≈{queue_depth})"
             )
 
         self.frame_count += 1
@@ -914,36 +1041,82 @@ def main():
     parser.add_argument(
         "--online-sampling-steps",
         type=int,
-        default=30,
-        help="Sampling timesteps for online diffusion (lower = faster).",
+        default=None,
+        help="Override sampling timesteps for online diffusion (lower = faster).",
     )
     parser.add_argument(
         "--online-chunk-config",
         type=str,
-        default="3,5,2",
-        help="Default chunk config pre,main,post for streaming mode.",
+        default=None,
+        help="Override chunk config pre,main,post for streaming mode.",
     )
     parser.add_argument(
         "--chunk-sleep-ms",
         type=float,
-        default=0.0,
-        help="Sleep in milliseconds between chunk submissions (safety valve).",
+        default=None,
+        help="Sleep in milliseconds between chunk submissions (online mode).",
+    )
+    parser.add_argument(
+        "--frame-quality",
+        type=int,
+        default=None,
+        help="Override base encoder quality (10-100).",
+    )
+    parser.add_argument(
+        "--min-frame-quality",
+        type=int,
+        default=None,
+        help="Override minimum encoder quality when backlogged.",
+    )
+    parser.add_argument(
+        "--frame-scale",
+        type=float,
+        default=None,
+        help="Uniform scale factor (0.1-1.0) applied before encoding.",
+    )
+    parser.add_argument(
+        "--frame-format",
+        choices=["webp", "jpeg"],
+        default=None,
+        help="Encoding format for streamed frames.",
     )
 
     args = parser.parse_args()
 
     # Initialize server
-    chunk_tuple = parse_chunk_config(args.online_chunk_config)
-    sampling_steps = clamp_sampling_timesteps(args.online_sampling_steps)
-    chunk_sleep_s = max(0.0, args.chunk_sleep_ms / 1000.0)
-
-    server = StreamingServer(
-        args.cfg_pkl,
-        args.data_root,
-        default_chunk_config=chunk_tuple,
-        default_sampling_steps=sampling_steps,
-        chunk_sleep_s=chunk_sleep_s,
+    chunk_tuple = (
+        parse_chunk_config(args.online_chunk_config)
+        if args.online_chunk_config
+        else None
     )
+    sampling_steps = (
+        clamp_sampling_timesteps(args.online_sampling_steps)
+        if args.online_sampling_steps is not None
+        else None
+    )
+    chunk_sleep_s = (
+        max(0.0, args.chunk_sleep_ms / 1000.0)
+        if args.chunk_sleep_ms is not None
+        else None
+    )
+
+    server_kwargs: Dict[str, Any] = {}
+    if chunk_tuple is not None:
+        server_kwargs["default_chunk_config"] = chunk_tuple
+    if sampling_steps is not None:
+        server_kwargs["default_sampling_steps"] = sampling_steps
+    if chunk_sleep_s is not None:
+        server_kwargs["chunk_sleep_s"] = chunk_sleep_s
+    if args.frame_quality is not None:
+        server_kwargs["frame_quality"] = args.frame_quality
+    if args.min_frame_quality is not None:
+        server_kwargs["frame_quality_min"] = args.min_frame_quality
+    if args.frame_scale is not None:
+        server_kwargs["frame_scale"] = args.frame_scale
+    if args.frame_format is not None:
+        server_kwargs["frame_format"] = args.frame_format
+
+    server = StreamingServer(args.cfg_pkl, args.data_root, **server_kwargs)
 
     # Run server
     logger.info(f"Starting Ditto Streaming Server on {args.host}:{args.port}")

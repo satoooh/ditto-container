@@ -1,4 +1,10 @@
-from streaming_config import clamp_sampling_timesteps, parse_chunk_config, to_chunk_list
+from streaming_config import (
+    clamp_quality,
+    clamp_sampling_timesteps,
+    clamp_scale,
+    parse_chunk_config,
+    to_chunk_list,
+)
 
 
 def test_parse_chunk_config_from_string():
@@ -22,3 +28,15 @@ def test_clamp_sampling_timesteps():
 def test_to_chunk_list_roundtrip():
     chunks = (3, 5, 2)
     assert to_chunk_list(chunks) == [3, 5, 2]
+
+
+def test_clamp_quality():
+    assert clamp_quality(150) == 100
+    assert clamp_quality(5) == 10
+    assert clamp_quality(None, default=80) == 80
+
+
+def test_clamp_scale():
+    assert clamp_scale(0.05) == 0.1
+    assert clamp_scale(1.5) == 1.0
+    assert clamp_scale(None, default=0.5) == 0.5

@@ -49,3 +49,27 @@ def to_chunk_list(chunks: Tuple[int, int, int]) -> list[int]:
     """Convert chunk tuple to list for JSON serialization."""
 
     return [int(value) for value in chunks]
+
+
+def clamp_quality(value: int | None, *, default: int = 85, minimum: int = 10, maximum: int = 100) -> int:
+    """Clamp WebP/JPEG quality into a safe range."""
+
+    if value is None:
+        return default
+    try:
+        numeric = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(maximum, numeric))
+
+
+def clamp_scale(value: float | None, *, default: float = 1.0, minimum: float = 0.1, maximum: float = 1.0) -> float:
+    """Clamp frame scale factor (1.0 = original size)."""
+
+    if value is None:
+        return default
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(maximum, numeric))
