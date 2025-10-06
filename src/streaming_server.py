@@ -19,7 +19,6 @@ from stream_pipeline_online import StreamSDK
 from streaming_config import clamp_sampling_timesteps, clamp_scale, parse_chunk_config
 from webrtc.tracks import AudioArrayTrack, VideoFrameTrack
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -147,7 +146,10 @@ class StreamingServer:
     <div class=\"row\"><label>Source Path</label><input id=\"sourcePath\" value=\"/app/src/example/image.png\"></div>
     <div class=\"row\"><label>Frame Scale</label><input id=\"frameScale\" value=\"0.5\"></div>
     <div class=\"row\"><label>Sampling Steps</label><input id=\"samplingSteps\" value=\"12\"></div>
+    <div class=\"row\"><label>Upload Audio</label><input type=\"file\" id=\"fileAudio\" accept=\"audio/*\"></div>
+    <div class=\"row\"><label>Upload Image</label><input type=\"file\" id=\"fileImage\" accept=\"image/*\"></div>
     <div class=\"row\">
+      <button id=\"btnUpload\">Upload Files</button>
       <button id=\"btnStart\">Start</button>
       <button id=\"btnStop\" disabled>Stop</button>
     </div>
@@ -162,6 +164,7 @@ class StreamingServer:
       const logEl = document.getElementById('log');
       const videoEl = document.getElementById('remoteVideo');
       const audioEl = document.getElementById('remoteAudio');
+      const btnUpload = document.getElementById('btnUpload');
       const btnStart = document.getElementById('btnStart');
       const btnStop = document.getElementById('btnStop');
       let pc = null;
@@ -171,6 +174,27 @@ class StreamingServer:
         logEl.textContent += `[${t}] ${msg}\n`;
         logEl.scrollTop = logEl.scrollHeight;
       }
+
+      btnUpload.onclick = async () => {
+        const audioFile = document.getElementById('fileAudio').files[0];
+        const imageFile = document.getElementById('fileImage').files[0];
+        if(!audioFile && !imageFile){
+          log('No files selected');
+          return;
+        }
+        const form = new FormData();
+        if(audioFile){ form.append('audio', audioFile); }
+        if(imageFile){ form.append('source', imageFile); }
+        const res = await fetch('/upload', { method: 'POST', body: form });
+        if(!res.ok){
+          log('Upload failed');
+          return;
+        }
+        const data = await res.json();
+        if(data.audio_path){ document.getElementById('audioPath').value = data.audio_path; }
+        if(data.source_path){ document.getElementById('sourcePath').value = data.source_path; }
+        log('Upload complete');
+      };
 
       async function start(){
         btnStart.disabled = true;
@@ -340,9 +364,13 @@ class StreamingServer:
                 f"/tmp/webrtc_output_{os.getpid()}_{int(loop.time() * 1000)}.mp4"
             )
 
-            await loop.run_in_executor(
-                None, sdk.setup, source_path, temp_output_path, **setup_kwargs
+            setup_callable = partial(
+                sdk.setup,
+                source_path,
+                temp_output_path,
+                **setup_kwargs,
             )
+            await loop.run_in_executor(None, setup_callable)
 
             audio = audio_samples_16k
             num_frames = int(len(audio) / 16000 * 25)

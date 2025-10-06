@@ -63,15 +63,20 @@ git clone https://huggingface.co/digital-avatar/ditto-talkinghead checkpoints
 
 ---
 ## 4. リアルタイムストリーミング
-### 4-1. 依存インストール
-Docker を使わずにローカルで試す場合は WebRTC 依存 (`aiortc`, `av`, `aiohttp`) を含めた開発環境をインストールしてください。
+### 4-1. アーキテクチャ概要（WebRTC）
+- **FastAPI + aiortc** でシグナリングと WebRTC メディア送信を行います。
+- `StreamSDK` の推論結果（映像）と 16 kHz 音声をそれぞれ `MediaStreamTrack` に流し込み、ブラウザや CLI が `RTCPeerConnection` で受信します。
+- VP9（デフォルト）による時間方向圧縮のおかげで、同品質で従来より大幅に帯域を削減できます。
+
+### 4-2. 依存インストール
+Docker を使わずにローカルで試す場合は WebRTC 依存 (`aiortc`, `av`, `aiohttp`, `ruff` など) を含めた開発環境をインストールしてください。
 ```bash
 pip install -r requirements-dev.txt
 ```
 
-Docker コンテナを使う場合は `./setup.sh all` を再実行してイメージを再ビルドしてください。
+Docker コンテナを使う場合は `./setup.sh all` を再実行してイメージを再ビルドしてください（Dockerfile に WebRTC 依存を追加済み）。
 
-### 4-2. サーバー起動
+### 4-3. サーバー起動
 ```bash
 cd /app/src
 python streaming_server.py \
@@ -81,12 +86,12 @@ python streaming_server.py \
   --frame-scale 0.5 \
   --online-sampling-steps 12
 ```
-- FastAPI + WebRTC によるリアルタイム配信。`POST /webrtc/offer` がシグナリング API
-- 起動時に TensorRT / StreamSDK をプリウォームし、推論と同時に WebRTC トラックへ映像・音声を送信
-- `--frame-scale`, `--online-sampling-steps` などの既定値を CLI から調整可能
-- `/upload` エンドポイントは従来通り利用可能
+- FastAPI + WebRTC によるリアルタイム配信（シグナリング API: `POST /webrtc/offer`）。
+- 起動時に TensorRT / StreamSDK をプリウォームし、推論と同時に WebRTC トラックへ映像・音声を送信。
+- `--frame-scale`, `--online-sampling-steps` などの既定値を CLI から調整可能。
+- `/upload` エンドポイントは従来通り利用可能（ブラウザからも利用できます）。
 
-### 4-3. クライアント
+### 4-4. クライアント（CLI）
 ```bash
 python streaming_client.py \
   --server http://localhost:8000 \
@@ -96,13 +101,23 @@ python streaming_client.py \
   --sampling-timesteps 12 \
   --timeout 30
 ```
-- WebRTC ベースでサーバーとシグナリングを行い、映像・音声を受信（`--record-file` を指定すると WebM へ保存）
-- 実行後に受信フレーム数と推定 FPS を標準出力に表示
+- WebRTC ベースでサーバーとシグナリングを行い、映像・音声を受信します（`--record-file` を指定すると WebM へ保存）。
+- 実行後に受信フレーム数と推定 FPS を標準出力に表示します。
 
-### 4-4. ブラウザデモ
+### 4-5. ブラウザデモ
 - アクセス先: `http://<ホスト>:8000/demo`
-- 「Start」を押すとブラウザが WebRTC で接続し、低レイテンシで映像・音声を再生
-- `Frame Scale` や `Sampling Steps` をページ上で変更して再生品質を調整
+- 「Start」を押すとブラウザが WebRTC で接続し、低レイテンシで映像・音声を再生します。
+- `Frame Scale` や `Sampling Steps` をページ上で変更して、帯域と画質のトレードオフを即座に確認できます。
+- 必要に応じて `Upload Audio` / `Upload Image` でファイルをアップロードすると、保存先パスが自動で入力欄に反映されます。
+
+### 4-6. 品質プリセットの目安
+- **画質優先**: `frame_scale=0.6`, `sampling_steps=15`（帯域 ≈1 Mbps / ≈12 FPS）。
+- **遅延優先**: `frame_scale=0.3`, `sampling_steps=10`, `chunk_config=2,3,2`（帯域 ≈0.3 Mbps / ≈17 FPS）。
+  - CPU/GPU の余裕を見ながら数値を調整してください。`--record-file` で受信映像を保存し、画質チェックが可能です。
+
+### 4-7. リモートクライアント
+- サーバーと異なるマシンで CLI を動かす手順は [`src/REMOTE_CLIENT_SETUP.md`](src/REMOTE_CLIENT_SETUP.md) にまとめています。
+- 基本的には `streaming_client.py` と `requirements-dev.txt` を転送し、`pip install -r requirements-dev.txt` 後に CLI を実行すれば動作します。
 
 ---
 ## 5. 運用ノウハウ
