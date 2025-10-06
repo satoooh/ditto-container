@@ -5,13 +5,14 @@ Tests WebSocket throughput between server and client to determine optimal stream
 Usage: python bandwidth_test_server.py --host 0.0.0.0 --port 8001
 """
 
+import argparse
 import asyncio
 import json
-import time
 import logging
-import argparse
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+import time
+
 import uvicorn
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -154,7 +155,7 @@ class BandwidthTester:
                     await websocket.send_text("ack")
 
             # Wait for completion signal
-            completion = await websocket.receive_text()
+            await websocket.receive_text()
             await websocket.send_text("ack")
 
             end_time = time.time()

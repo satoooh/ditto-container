@@ -1,13 +1,14 @@
-import librosa
 import math
 import os
-import numpy as np
-import random
-import torch
 import pickle
-import time
+import random
 import threading
+import time
 from collections import deque
+
+import librosa
+import numpy as np
+import torch
 
 from stream_pipeline_online import StreamSDK
 
@@ -60,7 +61,7 @@ class OnlineStats:
                 self.queue_depths["decode_f3d"].append(SDK.decode_f3d_queue.qsize())
                 self.queue_depths["putback"].append(SDK.putback_queue.qsize())
                 self.queue_depths["writer"].append(SDK.writer_queue.qsize())
-            except:
+            except Exception:
                 pass
             time.sleep(0.1)  # Monitor every 100ms
 

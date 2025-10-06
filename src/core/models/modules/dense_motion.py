@@ -4,10 +4,11 @@
 The module that predicting a dense motion from sparse motion representation given by kp_source and kp_driving
 """
 
-from torch import nn
-import torch.nn.functional as F
 import torch
-from .util import Hourglass, make_coordinate_grid, kp2gaussian
+import torch.nn.functional as F
+from torch import nn
+
+from .util import Hourglass, kp2gaussian, make_coordinate_grid
 
 
 class DenseMotionNetwork(nn.Module):
@@ -55,8 +56,6 @@ class DenseMotionNetwork(nn.Module):
         )  # (1, 1, d=16, h=64, w=64, 3)
         coordinate_grid = identity_grid - kp_driving.view(bs, self.num_kp, 1, 1, 1, 3)
 
-        k = coordinate_grid.shape[1]
-
         # NOTE: there lacks an one-order flow
         driving_to_source = coordinate_grid + kp_source.view(
             bs, self.num_kp, 1, 1, 1, 3
@@ -77,15 +76,24 @@ class DenseMotionNetwork(nn.Module):
         feature_repeat = feature_repeat.view(
             bs * (self.num_kp + 1), -1, d, h, w
         )  # (bs*(num_kp+1), c, d, h, w)
-        sparse_motions = sparse_motions.view(
-            (bs * (self.num_kp + 1), d, h, w, -1)
-        )  # (bs*(num_kp+1), d, h, w, 3)
+        sparse_motions = sparse_motions.view((
+            bs * (self.num_kp + 1),
+            d,
+            h,
+            w,
+            -1,
+        ))  # (bs*(num_kp+1), d, h, w, 3)
         sparse_deformed = F.grid_sample(
             feature_repeat, sparse_motions, align_corners=False
         )
-        sparse_deformed = sparse_deformed.view(
-            (bs, self.num_kp + 1, -1, d, h, w)
-        )  # (bs, num_kp+1, c, d, h, w)
+        sparse_deformed = sparse_deformed.view((
+            bs,
+            self.num_kp + 1,
+            -1,
+            d,
+            h,
+            w,
+        ))  # (bs, num_kp+1, c, d, h, w)
 
         return sparse_deformed
 

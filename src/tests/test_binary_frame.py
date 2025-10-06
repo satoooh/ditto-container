@@ -1,18 +1,21 @@
+import importlib.machinery
+import importlib.util
 import math
-import sys
 from pathlib import Path
 
 import pytest
 
 SRC_DIR = Path(__file__).resolve().parents[2] / "src"
-if str(SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(SRC_DIR))
+MODULE_PATH = SRC_DIR / "streaming_protocol.py"
 
-from streaming_protocol import (
-    FRAME_HEADER_STRUCT,
-    build_binary_frame_payload,
-    parse_binary_frame,
-)
+loader = importlib.machinery.SourceFileLoader("streaming_protocol", str(MODULE_PATH))
+spec = importlib.util.spec_from_loader(loader.name, loader)
+streaming_protocol = importlib.util.module_from_spec(spec)
+loader.exec_module(streaming_protocol)
+
+FRAME_HEADER_STRUCT = streaming_protocol.FRAME_HEADER_STRUCT
+build_binary_frame_payload = streaming_protocol.build_binary_frame_payload
+parse_binary_frame = streaming_protocol.parse_binary_frame
 
 
 def test_build_binary_frame_payload_roundtrip() -> None:

@@ -53,7 +53,7 @@ async def run_client(args: argparse.Namespace) -> None:
 
         async def consume() -> None:
             while True:
-                frame = await consume_track.recv()
+                _ = await consume_track.recv()
                 if track.kind == "video":
                     stats.register_frame()
 
@@ -77,12 +77,10 @@ async def run_client(args: argparse.Namespace) -> None:
 
     offer = await pc.createOffer()
     await pc.setLocalDescription(offer)
-    session_payload.update(
-        {
-            "sdp": pc.localDescription.sdp,
-            "type": pc.localDescription.type,
-        }
-    )
+    session_payload.update({
+        "sdp": pc.localDescription.sdp,
+        "type": pc.localDescription.type,
+    })
 
     async with aiohttp.ClientSession() as session:
         async with session.post(

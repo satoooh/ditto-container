@@ -63,7 +63,15 @@ git clone https://huggingface.co/digital-avatar/ditto-talkinghead checkpoints
 
 ---
 ## 4. リアルタイムストリーミング
-### 4-1. サーバー起動
+### 4-1. 依存インストール
+Docker を使わずにローカルで試す場合は WebRTC 依存 (`aiortc`, `av`, `aiohttp`) を含めた開発環境をインストールしてください。
+```bash
+pip install -r requirements-dev.txt
+```
+
+Docker コンテナを使う場合は `./setup.sh all` を再実行してイメージを再ビルドしてください。
+
+### 4-2. サーバー起動
 ```bash
 cd /app/src
 python streaming_server.py \
@@ -78,7 +86,7 @@ python streaming_server.py \
 - `--frame-scale`, `--online-sampling-steps` などの既定値を CLI から調整可能
 - `/upload` エンドポイントは従来通り利用可能
 
-### 4-2. クライアント
+### 4-3. クライアント
 ```bash
 python streaming_client.py \
   --server http://localhost:8000 \
@@ -91,7 +99,7 @@ python streaming_client.py \
 - WebRTC ベースでサーバーとシグナリングを行い、映像・音声を受信（`--record-file` を指定すると WebM へ保存）
 - 実行後に受信フレーム数と推定 FPS を標準出力に表示
 
-### 4-3. ブラウザデモ
+### 4-4. ブラウザデモ
 - アクセス先: `http://<ホスト>:8000/demo`
 - 「Start」を押すとブラウザが WebRTC で接続し、低レイテンシで映像・音声を再生
 - `Frame Scale` や `Sampling Steps` をページ上で変更して再生品質を調整

@@ -4,9 +4,10 @@
 cropping function and the related preprocess functions for cropping
 """
 
-import numpy as np
-from math import sin, cos, acos, degrees
+from math import acos, cos, degrees, sin
+
 import cv2
+import numpy as np
 
 DTYPE = np.float32
 CV2_INTERP = cv2.INTER_LINEAR
@@ -211,11 +212,11 @@ def parse_rect_from_landmark(
     pt2 = parse_pt2_from_pt_x(pts, use_lip=kwargs.get("use_lip", True))
 
     uy = pt2[1] - pt2[0]
-    l = np.linalg.norm(uy)
-    if l <= 1e-3:
+    norm_uy = np.linalg.norm(uy)
+    if norm_uy <= 1e-3:
         uy = np.array([0, 1], dtype=DTYPE)
     else:
-        uy /= l
+        uy /= norm_uy
     ux = np.array((uy[1], -uy[0]), dtype=DTYPE)
 
     # the rotation degree of the x-axis, the clockwise is positive, the counterclockwise is negative (image coordinate system)
