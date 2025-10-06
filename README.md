@@ -56,7 +56,7 @@ git clone https://huggingface.co/digital-avatar/ditto-talkinghead checkpoints
      --data_root "/app/checkpoints/ditto_trt_Ampere_Plus" \
      --cfg_pkl "/app/checkpoints/ditto_cfg/v0.4_hubert_cfg_trt.pkl" \
      --audio_path "/app/data/audio.wav" \
-     --source_path "/app/data/source_image.png" \
+     --source_path "/app/data/image.png" \
      --output_path "/app/output/result.mp4"
    ```
    PyTorch 版を利用する場合は `ditto_pytorch/` と `v0.4_hubert_cfg_pytorch.pkl` を指定します。
