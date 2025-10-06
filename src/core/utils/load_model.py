@@ -8,10 +8,13 @@ def load_model(model_path: str, device: str = "cuda", **kwargs):
         # onnx
         import onnxruntime
 
+        providers = []
         if device == "cuda":
-            providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
-        else:
-            providers = ["CPUExecutionProvider"]
+            providers.extend([
+                "TensorrtExecutionProvider",
+                "CUDAExecutionProvider",
+            ])
+        providers.append("CPUExecutionProvider")
         model = onnxruntime.InferenceSession(model_path, providers=providers)
         return model, "onnx"
 
@@ -54,7 +57,7 @@ def load_force_ori_type(
     device: str = "cuda",
     module_name="",
     package_name="..aux_models.modules",
-    force_ori_type=False, 
+    force_ori_type=False,
     **kwargs,
 ):
     import importlib

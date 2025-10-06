@@ -2,24 +2,26 @@
 # What: Connects to Ditto streaming server, decodes frames, and aggregates runtime/system telemetry.
 # Why: Provide actionable real-time stats (FPS, RTT, CPU/GPU, bandwidth) for troubleshooting.
 
-import asyncio
-import json
-import time
-import base64
 import argparse
+import asyncio
+import base64
+import json
 import logging
-import subprocess
 import shutil
-from typing import List, Dict, Any, Optional, Deque, Tuple
+import statistics
+import subprocess
+import time
 from collections import deque
 from dataclasses import dataclass
-import statistics
+from typing import Any, Deque, Dict, List, Optional, Tuple
+
 import cv2
 import numpy as np
-from streaming_protocol import parse_binary_frame
-
 import websockets
 from websockets.exceptions import ConnectionClosed
+
+from streaming_config import clamp_sampling_timesteps, parse_chunk_config, to_chunk_list
+from streaming_protocol import parse_binary_frame
 
 try:
     import psutil
@@ -30,7 +32,6 @@ except ImportError:  # pragma: no cover - fallback path when psutil absent
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
 
 
 @dataclass
@@ -83,47 +84,59 @@ class StreamingStats:
         except (TypeError, ValueError):
             return
         self.latency_samples.append(latency)
-        
+
     def add_frame(self, frame_stats: FrameStats):
         self.frames.append(frame_stats)
         self.total_frames += 1
         self.total_bytes += frame_stats.frame_size
-        
+
         current_time = frame_stats.arrival_time
-        
+
         if self.first_frame_time is None:
             self.first_frame_time = current_time
-        
+
         if self.last_frame_time is not None:
             interval = current_time - self.last_frame_time
             self.frame_intervals.append(interval)
-        
+
         self.last_frame_time = current_time
-    
+
     def get_stats(self) -> Dict[str, Any]:
         if not self.frames:
             return {"error": "No frames received"}
-        
-        total_duration = self.last_frame_time - self.first_frame_time if self.first_frame_time and self.last_frame_time else 0
-        
+
+        total_duration = (
+            self.last_frame_time - self.first_frame_time
+            if self.first_frame_time and self.last_frame_time
+            else 0
+        )
+
         # Calculate streaming latency (time from start to first frame)
-        streaming_latency = self.first_frame_time - self.streaming_start_time if self.first_frame_time and self.streaming_start_time else 0
-        
+        streaming_latency = (
+            self.first_frame_time - self.streaming_start_time
+            if self.first_frame_time and self.streaming_start_time
+            else 0
+        )
+
         # Frame interval statistics
         intervals = list(self.frame_intervals)
-        
+
         # Decode time statistics
         decode_times = [f.decode_time for f in self.frames]
         latency_stats = self._build_latency_stats()
         system_metrics = self._collect_system_metrics()
-        
+
         return {
             "total_frames": self.total_frames,
             "total_duration": total_duration,
             "streaming_latency": streaming_latency,
-            "average_fps": self.total_frames / total_duration if total_duration > 0 else 0,
+            "average_fps": self.total_frames / total_duration
+            if total_duration > 0
+            else 0,
             "total_bytes": self.total_bytes,
-            "average_frame_size": self.total_bytes / self.total_frames if self.total_frames > 0 else 0,
+            "average_frame_size": self.total_bytes / self.total_frames
+            if self.total_frames > 0
+            else 0,
             "frame_intervals": {
                 "count": len(intervals),
                 "mean": statistics.mean(intervals) if intervals else 0,
@@ -139,93 +152,97 @@ class StreamingStats:
                 "min": min(decode_times) if decode_times else 0,
                 "max": max(decode_times) if decode_times else 0,
             },
-            "bandwidth_mbps": (self.total_bytes * 8) / (total_duration * 1_000_000) if total_duration > 0 else 0,
+            "bandwidth_mbps": (self.total_bytes * 8) / (total_duration * 1_000_000)
+            if total_duration > 0
+            else 0,
             "latency": latency_stats,
             "system_metrics": system_metrics,
         }
-    
+
     def print_stats(self):
         stats = self.get_stats()
-        
+
         if "error" in stats:
             print(f"❌ {stats['error']}")
             return
-            
-        print("\n" + "="*70)
+
+        print("\n" + "=" * 70)
         print("STREAMING CLIENT STATISTICS")
-        print("="*70)
-        
+        print("=" * 70)
+
         print(f"Total Frames Received: {stats['total_frames']}")
         print(f"Total Duration: {stats['total_duration']:.2f}s")
-        print(f"Streaming Latency: {stats['streaming_latency']:.2f}s (time to first frame)")
+        print(
+            f"Streaming Latency: {stats['streaming_latency']:.2f}s (time to first frame)"
+        )
         print(f"Average FPS: {stats['average_fps']:.1f}")
-        print(f"Total Data: {stats['total_bytes']/1024/1024:.1f} MB")
-        print(f"Average Frame Size: {stats['average_frame_size']/1024:.1f} KB")
+        print(f"Total Data: {stats['total_bytes'] / 1024 / 1024:.1f} MB")
+        print(f"Average Frame Size: {stats['average_frame_size'] / 1024:.1f} KB")
         print(f"Bandwidth: {stats['bandwidth_mbps']:.1f} Mbps")
-        
-        print(f"\nFRAME INTERVALS:")
-        intervals = stats['frame_intervals']
-        print(f"  Count: {intervals['count']}")
-        print(f"  Mean: {intervals['mean']*1000:.1f}ms")
-        print(f"  Median: {intervals['median']*1000:.1f}ms") 
-        print(f"  Std Dev: {intervals['std']*1000:.1f}ms")
-        print(f"  Min: {intervals['min']*1000:.1f}ms")
-        print(f"  Max: {intervals['max']*1000:.1f}ms")
-        
-        print(f"\nDECODE TIMES:")
-        decode = stats['decode_times']
-        print(f"  Mean: {decode['mean']*1000:.1f}ms")
-        print(f"  Median: {decode['median']*1000:.1f}ms")
-        print(f"  Std Dev: {decode['std']*1000:.1f}ms")
-        print(f"  Min: {decode['min']*1000:.1f}ms")
-        print(f"  Max: {decode['max']*1000:.1f}ms")
 
-        latency = stats.get('latency', {})
-        if latency.get('count', 0) > 0:
-            print(f"\nRTT (Ping/Pong):")
+        print("\nFRAME INTERVALS:")
+        intervals = stats["frame_intervals"]
+        print(f"  Count: {intervals['count']}")
+        print(f"  Mean: {intervals['mean'] * 1000:.1f}ms")
+        print(f"  Median: {intervals['median'] * 1000:.1f}ms")
+        print(f"  Std Dev: {intervals['std'] * 1000:.1f}ms")
+        print(f"  Min: {intervals['min'] * 1000:.1f}ms")
+        print(f"  Max: {intervals['max'] * 1000:.1f}ms")
+
+        print("\nDECODE TIMES:")
+        decode = stats["decode_times"]
+        print(f"  Mean: {decode['mean'] * 1000:.1f}ms")
+        print(f"  Median: {decode['median'] * 1000:.1f}ms")
+        print(f"  Std Dev: {decode['std'] * 1000:.1f}ms")
+        print(f"  Min: {decode['min'] * 1000:.1f}ms")
+        print(f"  Max: {decode['max'] * 1000:.1f}ms")
+
+        latency = stats.get("latency", {})
+        if latency.get("count", 0) > 0:
+            print("\nRTT (Ping/Pong):")
             print(f"  Samples: {latency['count']}")
-            print(f"  Latest: {latency['latest']*1000:.1f}ms")
-            print(f"  Mean: {latency['mean']*1000:.1f}ms")
-            print(f"  Median: {latency['median']*1000:.1f}ms")
-            print(f"  Std Dev: {latency['std']*1000:.1f}ms")
-            print(f"  Min: {latency['min']*1000:.1f}ms")
-            print(f"  Max: {latency['max']*1000:.1f}ms")
+            print(f"  Latest: {latency['latest'] * 1000:.1f}ms")
+            print(f"  Mean: {latency['mean'] * 1000:.1f}ms")
+            print(f"  Median: {latency['median'] * 1000:.1f}ms")
+            print(f"  Std Dev: {latency['std'] * 1000:.1f}ms")
+            print(f"  Min: {latency['min'] * 1000:.1f}ms")
+            print(f"  Max: {latency['max'] * 1000:.1f}ms")
         else:
             print("\nRTT (Ping/Pong): no samples collected")
 
-        sys_metrics = stats.get('system_metrics', {})
-        cpu_metrics = sys_metrics.get('cpu')
+        sys_metrics = stats.get("system_metrics", {})
+        cpu_metrics = sys_metrics.get("cpu")
         if cpu_metrics:
-            available = cpu_metrics.get('available', True)
+            available = cpu_metrics.get("available", True)
             if available:
                 print("\nCPU:")
                 print(f"  Usage: {cpu_metrics['percent']:.1f}%")
-                per_cpu = cpu_metrics.get('per_cpu')
+                per_cpu = cpu_metrics.get("per_cpu")
                 if per_cpu:
                     print(f"  Per CPU: {[round(v, 1) for v in per_cpu]}")
                 else:
                     print("  Per CPU: n/a")
-                if cpu_metrics.get('frequency_mhz') is not None:
+                if cpu_metrics.get("frequency_mhz") is not None:
                     print(f"  Frequency: {cpu_metrics['frequency_mhz']:.0f} MHz")
-                if cpu_metrics.get('source'):
+                if cpu_metrics.get("source"):
                     print(f"  Source: {cpu_metrics['source']}")
             else:
                 print(f"\nCPU metrics unavailable ({cpu_metrics.get('reason')})")
 
-        memory_metrics = sys_metrics.get('memory')
+        memory_metrics = sys_metrics.get("memory")
         if memory_metrics:
-            if memory_metrics.get('available', True):
+            if memory_metrics.get("available", True):
                 print("\nMemory:")
                 print(
                     f"  Used: {memory_metrics['used_gb']:.2f} GB / "
                     f"{memory_metrics['total_gb']:.2f} GB ({memory_metrics['percent']:.1f}% used)"
                 )
-                if memory_metrics.get('source'):
+                if memory_metrics.get("source"):
                     print(f"  Source: {memory_metrics['source']}")
             else:
                 print(f"\nMemory metrics unavailable ({memory_metrics.get('reason')})")
 
-        gpu_metrics = sys_metrics.get('gpu') or []
+        gpu_metrics = sys_metrics.get("gpu") or []
         if gpu_metrics:
             print("\nGPU:")
             for idx, gpu in enumerate(gpu_metrics):
@@ -238,42 +255,60 @@ class StreamingStats:
         else:
             print("\nGPU: no data (nvidia-smi not available)")
 
-        network_metrics = sys_metrics.get('network')
+        network_metrics = sys_metrics.get("network")
         if network_metrics:
-            if network_metrics.get('available', True):
+            if network_metrics.get("available", True):
                 print("\nNetwork IO:")
-                print(f"  Bytes Sent: {network_metrics['bytes_sent']/1024/1024:.2f} MB")
-                print(f"  Bytes Received: {network_metrics['bytes_recv']/1024/1024:.2f} MB")
-                print(f"  Avg Throughput: {network_metrics['throughput_mbps']:.2f} Mbps")
-                if network_metrics.get('duration'):
+                print(
+                    f"  Bytes Sent: {network_metrics['bytes_sent'] / 1024 / 1024:.2f} MB"
+                )
+                print(
+                    f"  Bytes Received: {network_metrics['bytes_recv'] / 1024 / 1024:.2f} MB"
+                )
+                print(
+                    f"  Avg Throughput: {network_metrics['throughput_mbps']:.2f} Mbps"
+                )
+                if network_metrics.get("duration"):
                     print(f"  Measurement Window: {network_metrics['duration']:.2f}s")
-                if network_metrics.get('source'):
+                if network_metrics.get("source"):
                     print(f"  Source: {network_metrics['source']}")
             else:
                 print(f"\nNetwork IO unavailable ({network_metrics.get('reason')})")
         else:
             print("\nNetwork IO: not collected")
-        
-        print(f"\nREAL-TIME SUITABILITY:")
+
+        print("\nREAL-TIME SUITABILITY:")
         target_fps = 25  # Assuming 25 FPS target
         target_interval = 1.0 / target_fps
-        
-        if stats['average_fps'] >= target_fps * 0.9:
-            print(f"✅ Frame rate suitable for real-time ({stats['average_fps']:.1f} >= {target_fps*0.9:.1f} FPS)")
+
+        if stats["average_fps"] >= target_fps * 0.9:
+            print(
+                f"✅ Frame rate suitable for real-time ({stats['average_fps']:.1f} >= {target_fps * 0.9:.1f} FPS)"
+            )
         else:
-            print(f"⚠️  Frame rate below target ({stats['average_fps']:.1f} < {target_fps*0.9:.1f} FPS)")
-        
-        if stats['streaming_latency'] <= 3.0:
-            print(f"✅ Streaming latency acceptable ({stats['streaming_latency']:.1f}s <= 3.0s)")
+            print(
+                f"⚠️  Frame rate below target ({stats['average_fps']:.1f} < {target_fps * 0.9:.1f} FPS)"
+            )
+
+        if stats["streaming_latency"] <= 3.0:
+            print(
+                f"✅ Streaming latency acceptable ({stats['streaming_latency']:.1f}s <= 3.0s)"
+            )
         else:
-            print(f"⚠️  Streaming latency high ({stats['streaming_latency']:.1f}s > 3.0s)")
-        
-        if intervals['mean'] <= target_interval * 1.5:
-            print(f"✅ Frame intervals consistent ({intervals['mean']*1000:.1f}ms <= {target_interval*1.5*1000:.1f}ms)")
+            print(
+                f"⚠️  Streaming latency high ({stats['streaming_latency']:.1f}s > 3.0s)"
+            )
+
+        if intervals["mean"] <= target_interval * 1.5:
+            print(
+                f"✅ Frame intervals consistent ({intervals['mean'] * 1000:.1f}ms <= {target_interval * 1.5 * 1000:.1f}ms)"
+            )
         else:
-            print(f"⚠️  Frame intervals inconsistent ({intervals['mean']*1000:.1f}ms > {target_interval*1.5*1000:.1f}ms)")
-        
-        print("="*70)
+            print(
+                f"⚠️  Frame intervals inconsistent ({intervals['mean'] * 1000:.1f}ms > {target_interval * 1.5 * 1000:.1f}ms)"
+            )
+
+        print("=" * 70)
 
     def _build_latency_stats(self) -> Dict[str, Any]:
         samples = list(self.latency_samples)
@@ -316,7 +351,11 @@ class StreamingStats:
                 psutil.cpu_percent(interval=None)
                 self._psutil_primed = True
             per_cpu = psutil.cpu_percent(interval=None, percpu=True)
-            overall = float(sum(per_cpu) / len(per_cpu)) if per_cpu else float(psutil.cpu_percent(interval=None))
+            overall = (
+                float(sum(per_cpu) / len(per_cpu))
+                if per_cpu
+                else float(psutil.cpu_percent(interval=None))
+            )
             freq = psutil.cpu_freq()
             return {
                 "available": True,
@@ -326,7 +365,9 @@ class StreamingStats:
                 "logical_cores": psutil.cpu_count(logical=True),
                 "source": "psutil",
             }
-        except Exception as exc:  # pragma: no cover - diagnostics should not crash stats
+        except (
+            Exception
+        ) as exc:  # pragma: no cover - diagnostics should not crash stats
             logger.debug(f"CPU metrics collection failed: {exc}")
             return self._cpu_metrics_procfs()
 
@@ -337,8 +378,8 @@ class StreamingStats:
             mem = psutil.virtual_memory()
             return {
                 "available": True,
-                "total_gb": mem.total / (1024 ** 3),
-                "used_gb": (mem.total - mem.available) / (1024 ** 3),
+                "total_gb": mem.total / (1024**3),
+                "used_gb": (mem.total - mem.available) / (1024**3),
                 "percent": mem.percent,
                 "source": "psutil",
             }
@@ -361,7 +402,10 @@ class StreamingStats:
                 text=True,
                 timeout=2,
             )
-        except (subprocess.SubprocessError, FileNotFoundError) as exc:  # pragma: no cover
+        except (
+            subprocess.SubprocessError,
+            FileNotFoundError,
+        ) as exc:  # pragma: no cover
             logger.debug(f"GPU metrics collection failed: {exc}")
             return []
 
@@ -373,16 +417,14 @@ class StreamingStats:
             if len(parts) < 6:
                 continue
             name, mem_total, mem_used, util_gpu, util_mem, temperature = parts[:6]
-            gpus.append(
-                {
-                    "name": name,
-                    "memory_total_mib": int(float(mem_total)),
-                    "memory_used_mib": int(float(mem_used)),
-                    "util": float(util_gpu),
-                    "memory_util": float(util_mem),
-                    "temperature_c": float(temperature),
-                }
-            )
+            gpus.append({
+                "name": name,
+                "memory_total_mib": int(float(mem_total)),
+                "memory_used_mib": int(float(mem_used)),
+                "util": float(util_gpu),
+                "memory_util": float(util_mem),
+                "temperature_c": float(temperature),
+            })
         return gpus
 
     def _network_metrics(self) -> Optional[Dict[str, Any]]:
@@ -398,7 +440,9 @@ class StreamingStats:
                 sent_delta = max(current.bytes_sent - self._net_io_start.bytes_sent, 0)
                 recv_delta = max(current.bytes_recv - self._net_io_start.bytes_recv, 0)
                 total_bytes = sent_delta + recv_delta
-                throughput_mbps = (total_bytes * 8) / (duration * 1_000_000) if duration > 0 else 0.0
+                throughput_mbps = (
+                    (total_bytes * 8) / (duration * 1_000_000) if duration > 0 else 0.0
+                )
                 return {
                     "available": True,
                     "bytes_sent": sent_delta,
@@ -424,7 +468,9 @@ class StreamingStats:
         usage = self._compute_cpu_usage(prev, snapshot)
         return usage
 
-    def _compute_cpu_usage(self, prev: Dict[str, Any], current: Dict[str, Any]) -> Dict[str, Any]:
+    def _compute_cpu_usage(
+        self, prev: Dict[str, Any], current: Dict[str, Any]
+    ) -> Dict[str, Any]:
         overall_prev = prev.get("overall")
         overall_curr = current.get("overall")
         if not overall_prev or not overall_curr:
@@ -478,7 +524,9 @@ class StreamingStats:
 
         try:
             total_kib = float(info["MemTotal"].split()[0])
-            available_kib = float(info.get("MemAvailable", info.get("MemFree")).split()[0])
+            available_kib = float(
+                info.get("MemAvailable", info.get("MemFree")).split()[0]
+            )
         except (KeyError, ValueError, AttributeError) as exc:
             logger.debug(f"Memory metrics parse failed: {exc}")
             return {"available": False, "reason": "meminfo parse error"}
@@ -488,8 +536,8 @@ class StreamingStats:
 
         return {
             "available": True,
-            "total_gb": total_kib / (1024 ** 2),
-            "used_gb": used_kib / (1024 ** 2),
+            "total_gb": total_kib / (1024**2),
+            "used_gb": used_kib / (1024**2),
             "percent": percent,
             "source": "procfs",
         }
@@ -509,7 +557,9 @@ class StreamingStats:
         tx_diff = max(current[1] - prev_tx, 0)
         duration = max(time.time() - self.streaming_start_time, 0.0)
         total_bytes = rx_diff + tx_diff
-        throughput_mbps = (total_bytes * 8) / (duration * 1_000_000) if duration > 0 else 0.0
+        throughput_mbps = (
+            (total_bytes * 8) / (duration * 1_000_000) if duration > 0 else 0.0
+        )
 
         return {
             "available": True,
@@ -600,35 +650,39 @@ class StreamingClient:
         self.frame_save_dir = "received_frames"
         self.prefer_binary = prefer_binary
         self.active_binary = prefer_binary
-        
+
     async def connect(self):
         """Connect to the streaming server"""
         try:
-            self.websocket = await websockets.connect(f"{self.server_url}/ws/{self.client_id}")
+            self.websocket = await websockets.connect(
+                f"{self.server_url}/ws/{self.client_id}"
+            )
             logger.info(f"Connected to server as client {self.client_id}")
             return True
         except Exception as e:
             logger.error(f"Failed to connect to server: {e}")
             return False
-    
-    async def start_streaming(self, audio_path: str, source_path: str, config: Dict[str, Any] = None):
+
+    async def start_streaming(
+        self, audio_path: str, source_path: str, config: Dict[str, Any] = None
+    ):
         """Send start streaming command to server"""
         if not self.websocket:
             logger.error("Not connected to server")
             return False
-        
+
         if config is None:
             config = {}
-        
+
         message = {
             "type": "start_streaming",
             "audio_path": audio_path,
             "source_path": source_path,
             "setup_kwargs": config.get("setup_kwargs", {}),
             "run_kwargs": config.get("run_kwargs", {}),
-            "binary": self.prefer_binary
+            "binary": self.prefer_binary,
         }
-        
+
         try:
             await self.websocket.send(json.dumps(message))
             logger.info("Sent start streaming command")
@@ -637,12 +691,12 @@ class StreamingClient:
         except Exception as e:
             logger.error(f"Failed to send start streaming command: {e}")
             return False
-    
+
     async def stop_streaming(self):
         """Send stop streaming command to server"""
         if not self.websocket:
             return False
-        
+
         try:
             await self.websocket.send(json.dumps({"type": "stop_streaming"}))
             logger.info("Sent stop streaming command")
@@ -650,21 +704,23 @@ class StreamingClient:
         except Exception as e:
             logger.error(f"Failed to send stop streaming command: {e}")
             return False
-    
+
     async def handle_message(self, message: Dict[str, Any]):
         """Handle incoming messages from server"""
         message_type = message.get("type")
-        
+
         if message_type == "frame":
             await self.handle_json_frame(message)
         elif message_type == "streaming_started":
-            self.active_binary = bool(message.get('binary', self.prefer_binary))
+            self.active_binary = bool(message.get("binary", self.prefer_binary))
             logger.info(
                 f"Streaming started: {message.get('audio_path')} -> {message.get('source_path')} "
                 f"(binary={self.active_binary})"
             )
         elif message_type == "metadata":
-            logger.info(f"Metadata: {message.get('audio_duration'):.2f}s, {message.get('expected_frames')} frames")
+            logger.info(
+                f"Metadata: {message.get('audio_duration'):.2f}s, {message.get('expected_frames')} frames"
+            )
         elif message_type == "streaming_completed":
             logger.info("Streaming completed")
         elif message_type == "writer_closed":
@@ -675,7 +731,7 @@ class StreamingClient:
             logger.debug("Received pong")
         else:
             logger.debug(f"Unknown message type: {message_type}")
-    
+
     async def handle_json_frame(self, message: Dict[str, Any]):
         """Handle incoming frame"""
         frame_id = message.get("frame_id")
@@ -698,7 +754,9 @@ class StreamingClient:
 
         self._record_frame(frame_id, timestamp, frame_bytes)
 
-    def _record_frame(self, frame_id: int, timestamp: float, frame_bytes: bytes) -> None:
+    def _record_frame(
+        self, frame_id: int, timestamp: float, frame_bytes: bytes
+    ) -> None:
         arrival_time = time.time()
 
         decode_start = time.time()
@@ -722,20 +780,20 @@ class StreamingClient:
             timestamp=timestamp,
             arrival_time=arrival_time,
             frame_size=frame_size,
-            decode_time=decode_time
+            decode_time=decode_time,
         )
 
         self.stats.add_frame(frame_stats)
 
         if frame_id % 25 == 0:
-            logger.info(f"Received frame {frame_id}, size: {frame_size/1024:.1f}KB")
-    
+            logger.info(f"Received frame {frame_id}, size: {frame_size / 1024:.1f}KB")
+
     async def listen(self):
         """Listen for messages from server"""
         if not self.websocket:
             logger.error("Not connected to server")
             return
-        
+
         try:
             while True:
                 incoming = await self.websocket.recv()
@@ -752,7 +810,7 @@ class StreamingClient:
             logger.info("Connection closed by server")
         except Exception as e:
             logger.error(f"Error listening to server: {e}")
-    
+
     async def ping(self):
         """Send periodic ping to server"""
         if not self.websocket:
@@ -803,45 +861,91 @@ class StreamingClient:
 
 async def main():
     parser = argparse.ArgumentParser(description="Ditto Streaming Client")
-    parser.add_argument("--server", type=str, default="ws://localhost:8000", 
-                      help="Server WebSocket URL")
-    parser.add_argument("--client_id", type=str, default="test_client",
-                      help="Client ID")
-    parser.add_argument("--audio_path", type=str, default="./example/audio.wav",
-                      help="Audio file path on server")
-    parser.add_argument("--source_path", type=str, default="./example/image.png",
-                      help="Source image path on server")
-    parser.add_argument("--save_frames", action="store_true",
-                      help="Save received frames to disk")
-    parser.add_argument("--timeout", type=int, default=60,
-                      help="Connection timeout in seconds")
-    parser.add_argument("--transport", choices=["binary", "json"], default="binary",
-                      help="Preferred frame transport (default: binary)")
-    
+    parser.add_argument(
+        "--server", type=str, default="ws://localhost:8000", help="Server WebSocket URL"
+    )
+    parser.add_argument(
+        "--client_id", type=str, default="test_client", help="Client ID"
+    )
+    parser.add_argument(
+        "--audio_path",
+        type=str,
+        default="./example/audio.wav",
+        help="Audio file path on server",
+    )
+    parser.add_argument(
+        "--source_path",
+        type=str,
+        default="./example/image.png",
+        help="Source image path on server",
+    )
+    parser.add_argument(
+        "--save_frames", action="store_true", help="Save received frames to disk"
+    )
+    parser.add_argument(
+        "--timeout", type=int, default=60, help="Connection timeout in seconds"
+    )
+    parser.add_argument(
+        "--transport",
+        choices=["binary", "json"],
+        default="binary",
+        help="Preferred frame transport (default: binary)",
+    )
+    parser.add_argument(
+        "--sampling-timesteps",
+        type=int,
+        default=30,
+        help="Diffusion sampling steps for audio2motion (lower is faster).",
+    )
+    parser.add_argument(
+        "--chunk-config",
+        type=str,
+        default="3,5,2",
+        help="Comma separated chunk sizes pre,main,post (e.g. 3,5,2).",
+    )
+    parser.add_argument(
+        "--chunk-sleep-ms",
+        type=float,
+        default=0.0,
+        help="Optional sleep between chunk submissions to server (milliseconds).",
+    )
+
     args = parser.parse_args()
-    
+
     # Create client
-    client = StreamingClient(args.server, args.client_id, prefer_binary=(args.transport == "binary"))
+    client = StreamingClient(
+        args.server, args.client_id, prefer_binary=(args.transport == "binary")
+    )
     client.save_frames = args.save_frames
-    
+
     # Connect to server
     if not await client.connect():
         return
-    
+
     try:
         # Start streaming
+        chunk_tuple = parse_chunk_config(args.chunk_config)
+        sampling_steps = clamp_sampling_timesteps(args.sampling_timesteps)
+        chunk_sleep_s = max(0.0, args.chunk_sleep_ms / 1000.0)
+
         streaming_config = {
-            "setup_kwargs": {},
+            "setup_kwargs": {
+                "sampling_timesteps": sampling_steps,
+            },
             "run_kwargs": {
-                "chunksize": (3, 5, 2),
+                "chunksize": to_chunk_list(chunk_tuple),
+                "sampling_timesteps": sampling_steps,
+                "chunk_sleep_s": chunk_sleep_s,
                 "fade_in": -1,
-                "fade_out": -1
-            }
+                "fade_out": -1,
+            },
         }
-        
-        if not await client.start_streaming(args.audio_path, args.source_path, streaming_config):
+
+        if not await client.start_streaming(
+            args.audio_path, args.source_path, streaming_config
+        ):
             return
-        
+
         listen_task = asyncio.create_task(client.listen())
         latency_task = asyncio.create_task(client.monitor_latency())
 
@@ -857,7 +961,7 @@ async def main():
 
         # Print final statistics
         client.stats.print_stats()
-        
+
     except KeyboardInterrupt:
         logger.info("Interrupted by user")
     finally:
@@ -865,4 +969,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main()) 
+    asyncio.run(main())
