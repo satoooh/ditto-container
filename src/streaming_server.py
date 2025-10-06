@@ -8,6 +8,7 @@ import os
 import threading
 import time
 from asyncio import QueueEmpty, QueueFull
+from functools import partial
 from typing import Any, Dict, Optional
 
 import cv2
@@ -644,9 +645,10 @@ class StreamingServer:
 
             # This is where it might be getting stuck - let's run it in executor
             loop = asyncio.get_event_loop()
-            await loop.run_in_executor(
-                None, SDK.setup, source_path, temp_output_path, **setup_kwargs
+            setup_task = partial(
+                SDK.setup, source_path, temp_output_path, **setup_kwargs
             )
+            await loop.run_in_executor(None, setup_task)
 
             logger.info(f"SDK.setup() completed successfully for client {client_id}")
 
