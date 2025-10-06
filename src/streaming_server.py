@@ -12,6 +12,7 @@ import librosa
 import numpy as np
 import uvicorn
 from aiortc import RTCPeerConnection, RTCSessionDescription
+from aiortc.rtcconfiguration import RTCConfiguration, RTCIceServer
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
@@ -81,6 +82,9 @@ class StreamingServer:
         self.app = FastAPI(title="Ditto WebRTC Streaming Server", version="2.0.0")
         self._pcs: set[RTCPeerConnection] = set()
         self.setup_routes()
+        self.rtc_configuration = RTCConfiguration(
+            iceServers=[RTCIceServer(urls=["stun:stun.l.google.com:19302"])]
+        )
 
     def setup_routes(self) -> None:
         @self.app.get("/")
@@ -200,7 +204,9 @@ class StreamingServer:
       async function start(){
         btnStart.disabled = true;
         btnStop.disabled = false;
-        pc = new RTCPeerConnection();
+        pc = new RTCPeerConnection({
+          iceServers: [{urls: ['stun:stun.l.google.com:19302']}]
+        });
         const remoteStream = new MediaStream();
         videoEl.srcObject = remoteStream;
         audioEl.srcObject = remoteStream;
@@ -271,14 +277,17 @@ class StreamingServer:
 
     async def handle_offer(self, payload: OfferPayload) -> Dict[str, str]:
         offer = RTCSessionDescription(sdp=payload.sdp, type=payload.type)
-        pc = RTCPeerConnection()
+        pc = RTCPeerConnection(self.rtc_configuration)
         self._pcs.add(pc)
         loop = asyncio.get_running_loop()
+        connection_ready: asyncio.Event = asyncio.Event()
 
         @pc.on("connectionstatechange")
         async def on_state_change() -> None:
-            if pc.connectionState in {"closed", "failed", "disconnected"}:
-                await self._cleanup_peer(pc)
+            logger.info("Peer connection state: %s", pc.connectionState)
+            if pc.connectionState in {"connected", "failed", "disconnected", "closed"}:
+                if not connection_ready.is_set():
+                    connection_ready.set()
 
         video_track = VideoFrameTrack(loop=loop)
 
@@ -320,6 +329,7 @@ class StreamingServer:
         asyncio.create_task(
             self._run_streaming_pipeline(
                 pc=pc,
+                connection_ready=connection_ready,
                 video_track=video_track,
                 audio_track=audio_track,
                 audio_path=payload.audio_path,
@@ -345,6 +355,7 @@ class StreamingServer:
         pc: RTCPeerConnection,
         video_track: VideoFrameTrack,
         audio_track: AudioArrayTrack,
+        connection_ready: asyncio.Event,
         audio_path: str,
         audio_samples_16k: np.ndarray,
         source_path: str,
@@ -354,6 +365,12 @@ class StreamingServer:
     ) -> None:
         loop = asyncio.get_running_loop()
         try:
+            if not await self._wait_for_connection(pc, connection_ready):
+                logger.warning(
+                    "Peer connection did not reach connected state; aborting stream"
+                )
+                return
+
             sdk = StreamSDK(self.cfg_pkl, self.data_root)
             writer = WebRTCFrameWriter(
                 loop=loop, video_track=video_track, frame_scale=frame_scale
@@ -408,6 +425,16 @@ class StreamingServer:
         if pc in self._pcs:
             self._pcs.remove(pc)
         await pc.close()
+
+    async def _wait_for_connection(
+        self, pc: RTCPeerConnection, event: asyncio.Event, timeout: float = 15.0
+    ) -> bool:
+        try:
+            await asyncio.wait_for(event.wait(), timeout)
+        except asyncio.TimeoutError:
+            logger.warning("Timed out waiting for peer connection")
+            return False
+        return pc.connectionState == "connected"
 
 
 def main() -> None:
