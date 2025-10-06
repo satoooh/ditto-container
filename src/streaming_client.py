@@ -918,7 +918,7 @@ async def main():
     parser.add_argument(
         "--mode",
         choices=["offline", "online"],
-        default="offline",
+        default="online",
         help="Select inference mode (offline batches or online streaming).",
     )
     parser.add_argument(
