@@ -83,7 +83,10 @@ RUN pip install --extra-index-url https://pypi.org/simple \
     uvicorn[standard] \
     websockets \
     python-multipart \
-    pyaudio
+    pyaudio \
+    aiortc \
+    av \
+    aiohttp
 
 # Create working directory
 WORKDIR /app

@@ -247,13 +247,12 @@ class MotionDecoder(nn.Module):
         activation: Callable[[Tensor], Tensor] = F.gelu,
         use_rotary=True,
         multi_cond_frame=False,
-        **kwargs
+        **kwargs,
     ) -> None:
-
         super().__init__()
 
         self.multi_cond_frame = multi_cond_frame
-        
+
         output_feats = nfeats
 
         # positional embeddings
@@ -274,7 +273,9 @@ class MotionDecoder(nn.Module):
             nn.Mish(),
         )
 
-        self.to_time_cond = nn.Sequential(nn.Linear(latent_dim * 4, latent_dim),)
+        self.to_time_cond = nn.Sequential(
+            nn.Linear(latent_dim * 4, latent_dim),
+        )
 
         self.to_time_tokens = nn.Sequential(
             nn.Linear(latent_dim * 4, latent_dim * 2),  # 2 time tokens
@@ -329,9 +330,9 @@ class MotionDecoder(nn.Module):
             )
 
         self.seqTransDecoder = DecoderLayerStack(decoderstack)
-        
+
         self.final_layer = nn.Linear(latent_dim, output_feats)
-        
+
         self.epsilon = 0.00001
 
     def guided_forward(self, x, cond_frame, cond_embed, times, guidance_weight):
@@ -341,7 +342,12 @@ class MotionDecoder(nn.Module):
         return unc + (conditioned - unc) * guidance_weight
 
     def forward(
-        self, x: Tensor, cond_frame: Tensor, cond_embed: Tensor, times: Tensor, cond_drop_prob: float = 0.0
+        self,
+        x: Tensor,
+        cond_frame: Tensor,
+        cond_embed: Tensor,
+        times: Tensor,
+        cond_drop_prob: float = 0.0,
     ):
         batch_size, device = x.shape[0], x.device
 

@@ -13,7 +13,9 @@ class SizeMode(Enum):
 
 
 def _select_roi_size(
-    bbox: np.ndarray, image_size, size_mode: SizeMode  # x1, y1, x2, y2  # w,h
+    bbox: np.ndarray,
+    image_size,
+    size_mode: SizeMode,  # x1, y1, x2, y2  # w,h
 ):
     """Return the size of an ROI based on bounding box, image size and mode"""
     width, height = bbox[2] - bbox[0], bbox[3] - bbox[1]
@@ -55,7 +57,9 @@ def bbox_to_roi(
 
 
 class Landmark478:
-    def __init__(self, blaze_face_model_path="", face_mesh_model_path="", device="cuda", **kwargs):
+    def __init__(
+        self, blaze_face_model_path="", face_mesh_model_path="", device="cuda", **kwargs
+    ):
         if kwargs.get("force_ori_type", False):
             assert "task_path" in kwargs
             kwargs["module_name"] = "Landmark478"

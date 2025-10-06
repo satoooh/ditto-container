@@ -51,7 +51,9 @@ def to_chunk_list(chunks: Tuple[int, int, int]) -> list[int]:
     return [int(value) for value in chunks]
 
 
-def clamp_quality(value: int | None, *, default: int = 85, minimum: int = 10, maximum: int = 100) -> int:
+def clamp_quality(
+    value: int | None, *, default: int = 85, minimum: int = 10, maximum: int = 100
+) -> int:
     """Clamp WebP/JPEG quality into a safe range."""
 
     if value is None:
@@ -63,7 +65,13 @@ def clamp_quality(value: int | None, *, default: int = 85, minimum: int = 10, ma
     return max(minimum, min(maximum, numeric))
 
 
-def clamp_scale(value: float | None, *, default: float = 1.0, minimum: float = 0.1, maximum: float = 1.0) -> float:
+def clamp_scale(
+    value: float | None,
+    *,
+    default: float = 1.0,
+    minimum: float = 0.1,
+    maximum: float = 1.0,
+) -> float:
     """Clamp frame scale factor (1.0 = original size)."""
 
     if value is None:

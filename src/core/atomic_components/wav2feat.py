@@ -27,13 +27,13 @@ class Wav2Feat:
             self.support_streaming = True
         else:
             raise ValueError(f"Unsupported w2f_type: {w2f_type}")
-        
+
     def __call__(
-        self, 
-        audio, 
-        sr=16000, 
-        norm_mean_std=None,   # for s2g
-        chunksize=(3, 5, 2),   # for hubert
+        self,
+        audio,
+        sr=16000,
+        norm_mean_std=None,  # for s2g
+        chunksize=(3, 5, 2),  # for hubert
     ):
         if self.w2f_type == "hubert":
             feat = self.w2f(audio, chunksize=chunksize)
@@ -42,12 +42,12 @@ class Wav2Feat:
         else:
             raise ValueError(f"Unsupported w2f_type: {self.w2f_type}")
         return feat
-    
+
     def wav2feat(
         self,
-        audio, 
-        sr=16000, 
-        norm_mean_std=None,   # for s2g
+        audio,
+        sr=16000,
+        norm_mean_std=None,  # for s2g
         chunksize=(3, 5, 2),
     ):
         # for offline
@@ -58,7 +58,7 @@ class Wav2Feat:
         else:
             raise ValueError(f"Unsupported w2f_type: {self.w2f_type}")
         return feat
-    
+
 
 class Wav2FeatHubert:
     def __init__(
@@ -71,12 +71,12 @@ class Wav2FeatHubert:
         """
         audio_chunk: int(sum(chunksize) * 0.04 * 16000) + 80    # 6480
         """
-        valid_feat_s = - sum(chunksize[1:]) * 2   # -7
-        valid_feat_e = - chunksize[2] * 2   # -2
+        valid_feat_s = -sum(chunksize[1:]) * 2  # -7
+        valid_feat_e = -chunksize[2] * 2  # -2
 
         encoding_chunk = self.hubert(audio_chunk)
         valid_encoding = encoding_chunk[valid_feat_s:valid_feat_e]
-        valid_feat = valid_encoding.reshape(chunksize[1], 2, 1024).mean(1)    # [5, 1024]
+        valid_feat = valid_encoding.reshape(chunksize[1], 2, 1024).mean(1)  # [5, 1024]
         return valid_feat
 
     def wav2feat(self, audio, sr, chunksize=(3, 5, 2)):
@@ -87,14 +87,20 @@ class Wav2FeatHubert:
             audio_16k = audio
 
         num_f = math.ceil(len(audio_16k) / 16000 * 25)
-        split_len = int(sum(chunksize) * 0.04 * 16000) + 80    # 6480
+        split_len = int(sum(chunksize) * 0.04 * 16000) + 80  # 6480
 
-        speech_pad = np.concatenate([
-            np.zeros((split_len - int(sum(chunksize[1:]) * 0.04 * 16000),), dtype=audio_16k.dtype),
-            audio_16k,
-            np.zeros((split_len,), dtype=audio_16k.dtype),
-        ], 0)
-        
+        speech_pad = np.concatenate(
+            [
+                np.zeros(
+                    (split_len - int(sum(chunksize[1:]) * 0.04 * 16000),),
+                    dtype=audio_16k.dtype,
+                ),
+                audio_16k,
+                np.zeros((split_len,), dtype=audio_16k.dtype),
+            ],
+            0,
+        )
+
         i = 0
         res_lst = []
         while i < num_f:
@@ -104,7 +110,7 @@ class Wav2FeatHubert:
             valid_feat = self.__call__(audio_chunk, chunksize)
             res_lst.append(valid_feat)
             i += chunksize[1]
-        
+
         ret = np.concatenate(res_lst, 0)
         ret = ret[:num_f]
         return ret

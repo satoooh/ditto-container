@@ -40,6 +40,7 @@ class AvatarRegistrar:
     """
     source image|video -> rgb_list -> source_info
     """
+
     def __init__(
         self,
         insightface_det_cfg,
@@ -72,7 +73,9 @@ class AvatarRegistrar:
             crop_vy_ratio: -0.125
             crop_flag_do_rot: True
         """
-        rgb_list, is_image_flag = load_source_frames(source_path, max_dim=max_dim, n_frames=n_frames)
+        rgb_list, is_image_flag = load_source_frames(
+            source_path, max_dim=max_dim, n_frames=n_frames
+        )
         source_info = {
             "x_s_info_lst": [],
             "f_s_lst": [],
@@ -89,14 +92,13 @@ class AvatarRegistrar:
 
             last_lmk = info["lmk203"]
 
-        sc_f0 = source_info['x_s_info_lst'][0]['kp'].flatten()
+        sc_f0 = source_info["x_s_info_lst"][0]["kp"].flatten()
 
         source_info["sc"] = sc_f0
         source_info["is_image_flag"] = is_image_flag
         source_info["img_rgb_lst"] = rgb_list
 
         return source_info
-    
+
     def __call__(self, *args, **kwargs):
         return self.register(*args, **kwargs)
-    

@@ -27,7 +27,9 @@ def _make_test_frame() -> bytes:
     return encoded.tobytes()
 
 
-def test_streaming_stats_records_decode_and_latency(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_streaming_stats_records_decode_and_latency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # Ensure hardware metrics do not rely on actual system dependencies during tests.
     monkeypatch.setattr(streaming_client, "psutil", None)
     monkeypatch.setattr(streaming_client.shutil, "which", lambda _: None)
@@ -50,8 +52,12 @@ def test_streaming_stats_records_decode_and_latency(monkeypatch: pytest.MonkeyPa
         net_calls["count"] += 1
         return net_samples[idx]
 
-    monkeypatch.setattr(streaming_client.StreamingStats, "_read_proc_cpu_totals", fake_cpu_totals)
-    monkeypatch.setattr(streaming_client.StreamingStats, "_read_proc_net_counters", fake_net_totals)
+    monkeypatch.setattr(
+        streaming_client.StreamingStats, "_read_proc_cpu_totals", fake_cpu_totals
+    )
+    monkeypatch.setattr(
+        streaming_client.StreamingStats, "_read_proc_net_counters", fake_net_totals
+    )
 
     memory_stub = {
         "available": True,
@@ -60,7 +66,11 @@ def test_streaming_stats_records_decode_and_latency(monkeypatch: pytest.MonkeyPa
         "percent": 37.5,
         "source": "stub",
     }
-    monkeypatch.setattr(streaming_client.StreamingStats, "_memory_metrics_procfs", lambda self: memory_stub)
+    monkeypatch.setattr(
+        streaming_client.StreamingStats,
+        "_memory_metrics_procfs",
+        lambda self: memory_stub,
+    )
 
     client = streaming_client.StreamingClient("ws://example", "client")
     client.stats.mark_streaming_start()

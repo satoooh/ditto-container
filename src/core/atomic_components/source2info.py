@@ -101,7 +101,7 @@ class Source2Info:
         M_c2o = ret_dct["M_c2o"]
 
         return img_crop, M_c2o, lmk203
-    
+
     @staticmethod
     def _img_crop_to_bchw256(img_crop):
         rgb_256 = cv2.resize(img_crop, (256, 256), interpolation=cv2.INTER_AREA)
@@ -122,8 +122,8 @@ class Source2Info:
         # rgb uint8
         lmk478 = self.landmark478(img)  # [1, 478, 3]
         attr = EyeAttrUtilsByMP(lmk478)
-        lr_open = attr.LR_open().reshape(-1, 2)   # [1, 2]
-        lr_ball = attr.LR_ball_move().reshape(-1, 6)   # [1, 3, 2] -> [1, 6]
+        lr_open = attr.LR_open().reshape(-1, 2)  # [1, 2]
+        lr_ball = attr.LR_ball_move().reshape(-1, 6)  # [1, 3, 2] -> [1, 6]
         return [lr_open, lr_ball]
 
     def __call__(self, img, last_lmk=None, **kwargs):
@@ -143,13 +143,13 @@ class Source2Info:
         rgb_256_bchw = self._img_crop_to_bchw256(img_crop)
         kp_info = self._get_kp_info(rgb_256_bchw)
         fs = self._get_f3d(rgb_256_bchw)
-        
+
         source_info = {
             "x_s_info": kp_info,
             "f_s": fs,
             "M_c2o": M_c2o,
-            "eye_open": eye_open,   # [1, 2]
-            "eye_ball": eye_ball,    # [1, 6]
+            "eye_open": eye_open,  # [1, 2]
+            "eye_ball": eye_ball,  # [1, 6]
             "lmk203": lmk203,  # for track
         }
         return source_info

@@ -36,7 +36,7 @@ def check_resize(h, w, max_dim=1920, division=2):
 
     return new_h, new_w, rsz_flag
 
- 
+
 def load_image(image_path, max_dim=-1):
     img = cv2.imread(image_path, cv2.IMREAD_COLOR)
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
@@ -63,7 +63,7 @@ def load_video(video_path, n_frames=-1, max_dim=-1):
 
         if rsz_flag:
             frame_rgb = cv2.resize(frame_rgb, (new_w, new_h))
-        
+
         ret.append(frame_rgb)
 
     reader.close()
@@ -90,7 +90,7 @@ def _mirror_index(index, size):
         return res
     else:
         return size - res - 1
-    
+
 
 class LoopLoader:
     def __init__(self, item_list, max_iter_num=-1, mirror_loop=True):
@@ -102,14 +102,14 @@ class LoopLoader:
 
     def __len__(self):
         return self.max_iter_num
-    
+
     def __iter__(self):
         return self
-    
+
     def __next__(self):
         if self.idx >= self.max_iter_num:
             raise StopIteration
-        
+
         if self.mirror_loop:
             idx = _mirror_index(self.idx, self.item_num)
         else:
@@ -118,16 +118,10 @@ class LoopLoader:
 
         self.idx += 1
         return item
-    
+
     def __call__(self):
         return self.__iter__()
-    
+
     def reset(self, max_iter_num=-1):
         self.frame_idx = 0
         self.max_iter_num = max_iter_num if max_iter_num > 0 else self.item_num
-    
-
-
-
-
-

@@ -69,29 +69,32 @@ cd /app/src
 python streaming_server.py \
   --host 0.0.0.0 --port 8000 \
   --cfg_pkl "/app/checkpoints/ditto_cfg/v0.4_hubert_cfg_trt_online.pkl" \
-  --data_root "/app/checkpoints/ditto_trt_Ampere_Plus"
+  --data_root "/app/checkpoints/ditto_trt_Ampere_Plus" \
+  --frame-scale 0.5 \
+  --online-sampling-steps 12
 ```
-- FastAPI + WebSocket によるリアルタイム配信
-- 起動時に TensorRT / StreamSDK をプリウォーム
-- フレームはヘッダ `!IdI` + WebP のバイナリ WebSocket で送信
-- キュー深度に応じて WebP 品質を 85/75/60 に自動調整
-- `/upload` で音声・画像をアップロード可能
+- FastAPI + WebRTC によるリアルタイム配信。`POST /webrtc/offer` がシグナリング API
+- 起動時に TensorRT / StreamSDK をプリウォームし、推論と同時に WebRTC トラックへ映像・音声を送信
+- `--frame-scale`, `--online-sampling-steps` などの既定値を CLI から調整可能
+- `/upload` エンドポイントは従来通り利用可能
 
 ### 4-2. クライアント
 ```bash
 python streaming_client.py \
-  --server ws://localhost:8000 \
-  --client_id bench \
+  --server http://localhost:8000 \
   --audio_path /app/src/example/audio.wav \
-  --source_path /app/src/example/image.png
+  --source_path /app/src/example/image.png \
+  --frame-scale 0.5 \
+  --sampling-timesteps 12 \
+  --timeout 30
 ```
-- デフォルトでバイナリ受信。旧 JSON 経路を使う場合は `--transport json` を指定
-- 終了時に FPS / 初回フレーム時間 / 帯域などの統計を出力
+- WebRTC ベースでサーバーとシグナリングを行い、映像・音声を受信（`--record-file` を指定すると WebM へ保存）
+- 実行後に受信フレーム数と推定 FPS を標準出力に表示
 
 ### 4-3. ブラウザデモ
 - アクセス先: `http://<ホスト>:8000/demo`
-- WebSocket URL はページ内で自動検出
-- アップロード → 推論 → プレビューをブラウザのみで実行可能
+- 「Start」を押すとブラウザが WebRTC で接続し、低レイテンシで映像・音声を再生
+- `Frame Scale` や `Sampling Steps` をページ上で変更して再生品質を調整
 
 ---
 ## 5. 運用ノウハウ

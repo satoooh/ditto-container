@@ -12,7 +12,7 @@ class VideoWriterByImageIO:
         ffmpeg_params = ["-crf", str(kwargs.get("crf", 18))]
 
         os.makedirs(os.path.dirname(video_path), exist_ok=True)
-        
+
         writer = imageio.get_writer(
             video_path,
             fps=fps,

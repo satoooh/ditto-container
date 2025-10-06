@@ -9,6 +9,7 @@ decoder_cfg = {
 }
 """
 
+
 class DecodeF3D:
     def __init__(
         self,
@@ -19,4 +20,3 @@ class DecodeF3D:
     def __call__(self, f_s):
         out = self.decoder(f_s)
         return out
-    

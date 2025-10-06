@@ -10,7 +10,6 @@ from .util import SameBlock2d, DownBlock2d, ResBlock3d
 
 
 class AppearanceFeatureExtractor(nn.Module):
-
     def __init__(
         self,
         image_channel=3,
@@ -69,6 +68,8 @@ class AppearanceFeatureExtractor(nn.Module):
         return f_s
 
     def load_model(self, ckpt_path):
-        self.load_state_dict(torch.load(ckpt_path, map_location=lambda storage, loc: storage))
+        self.load_state_dict(
+            torch.load(ckpt_path, map_location=lambda storage, loc: storage)
+        )
         self.eval()
         return self

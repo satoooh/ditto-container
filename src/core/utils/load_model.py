@@ -10,10 +10,12 @@ def load_model(model_path: str, device: str = "cuda", **kwargs):
 
         providers = []
         if device == "cuda":
-            providers.extend([
-                "TensorrtExecutionProvider",
-                "CUDAExecutionProvider",
-            ])
+            providers.extend(
+                [
+                    "TensorrtExecutionProvider",
+                    "CUDAExecutionProvider",
+                ]
+            )
         providers.append("CPUExecutionProvider")
         model = onnxruntime.InferenceSession(model_path, providers=providers)
         return model, "onnx"

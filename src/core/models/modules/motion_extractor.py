@@ -18,8 +18,10 @@ class MotionExtractor(nn.Module):
     def forward(self, x):
         out = self.detector(x)
         return out  # pitch, yaw, roll, t, exp, scale, kp
-    
+
     def load_model(self, ckpt_path):
-        self.load_state_dict(torch.load(ckpt_path, map_location=lambda storage, loc: storage))
+        self.load_state_dict(
+            torch.load(ckpt_path, map_location=lambda storage, loc: storage)
+        )
         self.eval()
         return self
