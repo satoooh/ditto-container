@@ -10,7 +10,7 @@ import argparse
 import logging
 import subprocess
 import shutil
-from typing import List, Dict, Any, Optional, Deque
+from typing import List, Dict, Any, Optional, Deque, Tuple
 from collections import deque
 from dataclasses import dataclass
 import statistics
@@ -55,6 +55,8 @@ class StreamingStats:
         self.latency_samples: Deque[float] = deque(maxlen=200)
         self._net_io_start = None
         self._psutil_primed = False
+        self._proc_cpu_prev: Optional[Dict[str, Any]] = None
+        self._proc_net_prev: Optional[Tuple[int, int]] = None
 
     def mark_streaming_start(self):
         self.streaming_start_time = time.time()
@@ -70,6 +72,8 @@ class StreamingStats:
         else:
             self._net_io_start = None
             self._psutil_primed = False
+            self._proc_cpu_prev = self._read_proc_cpu_totals()
+            self._proc_net_prev = self._read_proc_net_counters()
 
     def record_latency(self, latency_seconds: Optional[float]):
         if latency_seconds is None:
@@ -196,34 +200,57 @@ class StreamingStats:
             if available:
                 print("\nCPU:")
                 print(f"  Usage: {cpu_metrics['percent']:.1f}%")
-                print(f"  Per CPU: {[round(v, 1) for v in cpu_metrics['per_cpu']]}")
+                per_cpu = cpu_metrics.get('per_cpu')
+                if per_cpu:
+                    print(f"  Per CPU: {[round(v, 1) for v in per_cpu]}")
+                else:
+                    print("  Per CPU: n/a")
                 if cpu_metrics.get('frequency_mhz') is not None:
                     print(f"  Frequency: {cpu_metrics['frequency_mhz']:.0f} MHz")
+                if cpu_metrics.get('source'):
+                    print(f"  Source: {cpu_metrics['source']}")
             else:
                 print(f"\nCPU metrics unavailable ({cpu_metrics.get('reason')})")
 
         memory_metrics = sys_metrics.get('memory')
         if memory_metrics:
-            print("\nMemory:")
-            print(f"  Used: {memory_metrics['used_gb']:.2f} GB / {memory_metrics['total_gb']:.2f} GB ({memory_metrics['percent']:.1f}% used)")
+            if memory_metrics.get('available', True):
+                print("\nMemory:")
+                print(
+                    f"  Used: {memory_metrics['used_gb']:.2f} GB / "
+                    f"{memory_metrics['total_gb']:.2f} GB ({memory_metrics['percent']:.1f}% used)"
+                )
+                if memory_metrics.get('source'):
+                    print(f"  Source: {memory_metrics['source']}")
+            else:
+                print(f"\nMemory metrics unavailable ({memory_metrics.get('reason')})")
 
         gpu_metrics = sys_metrics.get('gpu') or []
         if gpu_metrics:
             print("\nGPU:")
             for idx, gpu in enumerate(gpu_metrics):
                 prefix = f"  GPU {idx}:" if len(gpu_metrics) > 1 else "  "
-                print(f"{prefix} {gpu['name']} | Util: {gpu['util']}% | Mem: {gpu['memory_used']}/{gpu['memory_total']} MiB | Temp: {gpu['temperature']}°C")
+                print(
+                    f"{prefix} {gpu['name']} | Util: {gpu['util']}% | "
+                    f"Mem: {gpu['memory_used_mib']}/{gpu['memory_total_mib']} MiB | "
+                    f"Temp: {gpu['temperature_c']}°C"
+                )
         else:
             print("\nGPU: no data (nvidia-smi not available)")
 
         network_metrics = sys_metrics.get('network')
         if network_metrics:
-            print("\nNetwork IO:")
-            print(f"  Bytes Sent: {network_metrics['bytes_sent']/1024/1024:.2f} MB")
-            print(f"  Bytes Received: {network_metrics['bytes_recv']/1024/1024:.2f} MB")
-            print(f"  Avg Throughput: {network_metrics['throughput_mbps']:.2f} Mbps")
-            if network_metrics.get('duration'):
-                print(f"  Measurement Window: {network_metrics['duration']:.2f}s")
+            if network_metrics.get('available', True):
+                print("\nNetwork IO:")
+                print(f"  Bytes Sent: {network_metrics['bytes_sent']/1024/1024:.2f} MB")
+                print(f"  Bytes Received: {network_metrics['bytes_recv']/1024/1024:.2f} MB")
+                print(f"  Avg Throughput: {network_metrics['throughput_mbps']:.2f} Mbps")
+                if network_metrics.get('duration'):
+                    print(f"  Measurement Window: {network_metrics['duration']:.2f}s")
+                if network_metrics.get('source'):
+                    print(f"  Source: {network_metrics['source']}")
+            else:
+                print(f"\nNetwork IO unavailable ({network_metrics.get('reason')})")
         else:
             print("\nNetwork IO: not collected")
         
@@ -283,7 +310,7 @@ class StreamingStats:
 
     def _cpu_metrics(self) -> Dict[str, Any]:
         if not psutil:
-            return {"available": False, "reason": "psutil not installed"}
+            return self._cpu_metrics_procfs()
         try:
             if not self._psutil_primed:
                 psutil.cpu_percent(interval=None)
@@ -297,24 +324,27 @@ class StreamingStats:
                 "per_cpu": per_cpu,
                 "frequency_mhz": freq.current if freq else None,
                 "logical_cores": psutil.cpu_count(logical=True),
+                "source": "psutil",
             }
         except Exception as exc:  # pragma: no cover - diagnostics should not crash stats
             logger.debug(f"CPU metrics collection failed: {exc}")
-            return {"available": False, "reason": str(exc)}
+            return self._cpu_metrics_procfs()
 
     def _memory_metrics(self) -> Optional[Dict[str, Any]]:
         if not psutil:
-            return None
+            return self._memory_metrics_procfs()
         try:
             mem = psutil.virtual_memory()
             return {
+                "available": True,
                 "total_gb": mem.total / (1024 ** 3),
                 "used_gb": (mem.total - mem.available) / (1024 ** 3),
                 "percent": mem.percent,
+                "source": "psutil",
             }
         except Exception as exc:  # pragma: no cover
             logger.debug(f"Memory metrics collection failed: {exc}")
-            return None
+            return self._memory_metrics_procfs()
 
     def _gpu_metrics(self) -> List[Dict[str, Any]]:
         if not shutil.which("nvidia-smi"):
@@ -346,39 +376,218 @@ class StreamingStats:
             gpus.append(
                 {
                     "name": name,
-                    "memory_total": f"{mem_total} MiB",
-                    "memory_used": f"{mem_used} MiB",
+                    "memory_total_mib": int(float(mem_total)),
+                    "memory_used_mib": int(float(mem_used)),
                     "util": float(util_gpu),
                     "memory_util": float(util_mem),
-                    "temperature": float(temperature),
+                    "temperature_c": float(temperature),
                 }
             )
         return gpus
 
     def _network_metrics(self) -> Optional[Dict[str, Any]]:
-        if not psutil or not self.streaming_start_time:
+        if not self.streaming_start_time:
             return None
-        if not self._net_io_start:
-            return None
+        if psutil and self._net_io_start:
+            try:
+                current = psutil.net_io_counters()
+            except Exception as exc:  # pragma: no cover
+                logger.debug(f"Network metrics collection failed: {exc}")
+            else:
+                duration = max(time.time() - self.streaming_start_time, 0.0)
+                sent_delta = max(current.bytes_sent - self._net_io_start.bytes_sent, 0)
+                recv_delta = max(current.bytes_recv - self._net_io_start.bytes_recv, 0)
+                total_bytes = sent_delta + recv_delta
+                throughput_mbps = (total_bytes * 8) / (duration * 1_000_000) if duration > 0 else 0.0
+                return {
+                    "available": True,
+                    "bytes_sent": sent_delta,
+                    "bytes_recv": recv_delta,
+                    "throughput_mbps": throughput_mbps,
+                    "duration": duration,
+                    "source": "psutil",
+                }
+        return self._network_metrics_procfs()
+
+    def _cpu_metrics_procfs(self) -> Dict[str, Any]:
+        snapshot = self._read_proc_cpu_totals()
+        if snapshot is None:
+            return {"available": False, "reason": "procfs not accessible"}
+
+        if self._proc_cpu_prev is None:
+            self._proc_cpu_prev = snapshot
+            return {"available": False, "reason": "collecting baseline"}
+
+        prev = self._proc_cpu_prev
+        self._proc_cpu_prev = snapshot
+
+        usage = self._compute_cpu_usage(prev, snapshot)
+        return usage
+
+    def _compute_cpu_usage(self, prev: Dict[str, Any], current: Dict[str, Any]) -> Dict[str, Any]:
+        overall_prev = prev.get("overall")
+        overall_curr = current.get("overall")
+        if not overall_prev or not overall_curr:
+            return {"available": False, "reason": "invalid procfs data"}
+
+        total_diff = overall_curr[0] - overall_prev[0]
+        idle_diff = overall_curr[1] - overall_prev[1]
+        if total_diff <= 0:
+            percent = 0.0
+        else:
+            percent = max(0.0, min(100.0, (1 - idle_diff / total_diff) * 100.0))
+
+        per_cpu_usages: List[float] = []
+        prev_list = prev.get("per_cpu", [])
+        curr_list = current.get("per_cpu", [])
+        for idx, curr_entry in enumerate(curr_list):
+            try:
+                prev_entry = prev_list[idx]
+            except IndexError:
+                continue
+            total = curr_entry[0] - prev_entry[0]
+            idle = curr_entry[1] - prev_entry[1]
+            if total <= 0:
+                per_cpu_usages.append(0.0)
+            else:
+                per_cpu_usages.append(max(0.0, min(100.0, (1 - idle / total) * 100.0)))
+
+        return {
+            "available": True,
+            "percent": percent,
+            "per_cpu": per_cpu_usages,
+            "frequency_mhz": None,
+            "logical_cores": len(per_cpu_usages) if per_cpu_usages else None,
+            "source": "procfs",
+        }
+
+    def _memory_metrics_procfs(self) -> Dict[str, Any]:
         try:
-            current = psutil.net_io_counters()
-        except Exception as exc:  # pragma: no cover
-            logger.debug(f"Network metrics collection failed: {exc}")
-            return None
+            with open("/proc/meminfo", "r", encoding="utf-8") as meminfo:
+                data = meminfo.read().splitlines()
+        except OSError as exc:
+            logger.debug(f"Memory metrics (procfs) failed: {exc}")
+            return {"available": False, "reason": "procfs not accessible"}
 
+        info = {}
+        for line in data:
+            if ":" not in line:
+                continue
+            key, value = line.split(":", 1)
+            info[key.strip()] = value.strip()
+
+        try:
+            total_kib = float(info["MemTotal"].split()[0])
+            available_kib = float(info.get("MemAvailable", info.get("MemFree")).split()[0])
+        except (KeyError, ValueError, AttributeError) as exc:
+            logger.debug(f"Memory metrics parse failed: {exc}")
+            return {"available": False, "reason": "meminfo parse error"}
+
+        used_kib = total_kib - available_kib
+        percent = (used_kib / total_kib) * 100 if total_kib else 0.0
+
+        return {
+            "available": True,
+            "total_gb": total_kib / (1024 ** 2),
+            "used_gb": used_kib / (1024 ** 2),
+            "percent": percent,
+            "source": "procfs",
+        }
+
+    def _network_metrics_procfs(self) -> Optional[Dict[str, Any]]:
+        current = self._read_proc_net_counters()
+        if current is None:
+            return {"available": False, "reason": "procfs not accessible"}
+        if self._proc_net_prev is None:
+            self._proc_net_prev = current
+            return {"available": False, "reason": "collecting baseline"}
+
+        prev_rx, prev_tx = self._proc_net_prev
+        self._proc_net_prev = current
+
+        rx_diff = max(current[0] - prev_rx, 0)
+        tx_diff = max(current[1] - prev_tx, 0)
         duration = max(time.time() - self.streaming_start_time, 0.0)
-        sent_delta = max(current.bytes_sent - self._net_io_start.bytes_sent, 0)
-        recv_delta = max(current.bytes_recv - self._net_io_start.bytes_recv, 0)
-        total_bytes = sent_delta + recv_delta
-
+        total_bytes = rx_diff + tx_diff
         throughput_mbps = (total_bytes * 8) / (duration * 1_000_000) if duration > 0 else 0.0
 
         return {
-            "bytes_sent": sent_delta,
-            "bytes_recv": recv_delta,
+            "available": True,
+            "bytes_sent": tx_diff,
+            "bytes_recv": rx_diff,
             "throughput_mbps": throughput_mbps,
             "duration": duration,
+            "source": "procfs",
         }
+
+    def _read_proc_cpu_totals(self) -> Optional[Dict[str, Any]]:
+        try:
+            with open("/proc/stat", "r", encoding="utf-8") as stat_file:
+                lines = stat_file.readlines()
+        except OSError as exc:
+            logger.debug(f"CPU metrics (procfs) failed: {exc}")
+            return None
+
+        if not lines:
+            return None
+
+        def parse_cpu_line(line: str) -> Optional[Tuple[float, float]]:
+            parts = line.strip().split()
+            if not parts or not parts[0].startswith("cpu"):
+                return None
+            try:
+                values = [float(v) for v in parts[1:]]
+            except ValueError:
+                return None
+            if len(values) < 4:
+                return None
+            total = sum(values)
+            idle = values[3] + values[4] if len(values) > 4 else values[3]
+            return total, idle
+
+        overall_line = parse_cpu_line(lines[0])
+        if overall_line is None:
+            return None
+
+        per_cpu_totals: List[Tuple[float, float]] = []
+        for line in lines[1:]:
+            parsed = parse_cpu_line(line)
+            if parsed is None:
+                continue
+            per_cpu_totals.append(parsed)
+
+        return {
+            "overall": (overall_line[0], overall_line[1]),
+            "per_cpu": per_cpu_totals,
+        }
+
+    def _read_proc_net_counters(self) -> Optional[Tuple[int, int]]:
+        try:
+            with open("/proc/net/dev", "r", encoding="utf-8") as net_file:
+                lines = net_file.readlines()
+        except OSError as exc:
+            logger.debug(f"Network metrics (procfs) failed: {exc}")
+            return None
+
+        rx_total = 0
+        tx_total = 0
+
+        for line in lines[2:]:  # skip headers
+            if ":" not in line:
+                continue
+            interface, data = line.split(":", 1)
+            fields = data.split()
+            if len(fields) < 10:
+                continue
+            try:
+                rx = int(fields[0])
+                tx = int(fields[8])
+            except ValueError:
+                continue
+            rx_total += rx
+            tx_total += tx
+
+        return (rx_total, tx_total)
 
 
 class StreamingClient:
@@ -571,10 +780,13 @@ class StreamingClient:
                     break
 
                 try:
+                    send_time = time.perf_counter()
                     pong_waiter = await self.websocket.ping()
                     latency = await pong_waiter
-                    if latency is None and hasattr(self.websocket, "latency"):
+                    if not latency and hasattr(self.websocket, "latency"):
                         latency = getattr(self.websocket, "latency")
+                    if not latency:
+                        latency = time.perf_counter() - send_time
                     self.stats.record_latency(latency)
                 except ConnectionClosed:
                     break
