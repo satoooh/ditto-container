@@ -1,10 +1,16 @@
+# Where: CLI-side streaming client invoked for manual diagnostics.
+# What: Connects to Ditto streaming server, decodes frames, and aggregates runtime/system telemetry.
+# Why: Provide actionable real-time stats (FPS, RTT, CPU/GPU, bandwidth) for troubleshooting.
+
 import asyncio
 import json
 import time
 import base64
 import argparse
 import logging
-from typing import List, Dict, Any, Optional
+import subprocess
+import shutil
+from typing import List, Dict, Any, Optional, Deque
 from collections import deque
 from dataclasses import dataclass
 import statistics
@@ -14,6 +20,11 @@ from streaming_protocol import parse_binary_frame
 
 import websockets
 from websockets.exceptions import ConnectionClosed
+
+try:
+    import psutil
+except ImportError:  # pragma: no cover - fallback path when psutil absent
+    psutil = None
 
 
 # Configure logging
@@ -41,6 +52,33 @@ class StreamingStats:
         self.total_frames = 0
         self.total_bytes = 0
         self.frame_intervals = deque(maxlen=100)  # Keep last 100 intervals
+        self.latency_samples: Deque[float] = deque(maxlen=200)
+        self._net_io_start = None
+        self._psutil_primed = False
+
+    def mark_streaming_start(self):
+        self.streaming_start_time = time.time()
+        if psutil:
+            try:
+                self._net_io_start = psutil.net_io_counters()
+                psutil.cpu_percent(interval=None)
+                self._psutil_primed = True
+            except Exception as exc:  # pragma: no cover - defensive fallback
+                logger.debug(f"Failed to prime psutil metrics: {exc}")
+                self._net_io_start = None
+                self._psutil_primed = False
+        else:
+            self._net_io_start = None
+            self._psutil_primed = False
+
+    def record_latency(self, latency_seconds: Optional[float]):
+        if latency_seconds is None:
+            return
+        try:
+            latency = float(latency_seconds)
+        except (TypeError, ValueError):
+            return
+        self.latency_samples.append(latency)
         
     def add_frame(self, frame_stats: FrameStats):
         self.frames.append(frame_stats)
@@ -72,6 +110,8 @@ class StreamingStats:
         
         # Decode time statistics
         decode_times = [f.decode_time for f in self.frames]
+        latency_stats = self._build_latency_stats()
+        system_metrics = self._collect_system_metrics()
         
         return {
             "total_frames": self.total_frames,
@@ -96,6 +136,8 @@ class StreamingStats:
                 "max": max(decode_times) if decode_times else 0,
             },
             "bandwidth_mbps": (self.total_bytes * 8) / (total_duration * 1_000_000) if total_duration > 0 else 0,
+            "latency": latency_stats,
+            "system_metrics": system_metrics,
         }
     
     def print_stats(self):
@@ -133,6 +175,57 @@ class StreamingStats:
         print(f"  Std Dev: {decode['std']*1000:.1f}ms")
         print(f"  Min: {decode['min']*1000:.1f}ms")
         print(f"  Max: {decode['max']*1000:.1f}ms")
+
+        latency = stats.get('latency', {})
+        if latency.get('count', 0) > 0:
+            print(f"\nRTT (Ping/Pong):")
+            print(f"  Samples: {latency['count']}")
+            print(f"  Latest: {latency['latest']*1000:.1f}ms")
+            print(f"  Mean: {latency['mean']*1000:.1f}ms")
+            print(f"  Median: {latency['median']*1000:.1f}ms")
+            print(f"  Std Dev: {latency['std']*1000:.1f}ms")
+            print(f"  Min: {latency['min']*1000:.1f}ms")
+            print(f"  Max: {latency['max']*1000:.1f}ms")
+        else:
+            print("\nRTT (Ping/Pong): no samples collected")
+
+        sys_metrics = stats.get('system_metrics', {})
+        cpu_metrics = sys_metrics.get('cpu')
+        if cpu_metrics:
+            available = cpu_metrics.get('available', True)
+            if available:
+                print("\nCPU:")
+                print(f"  Usage: {cpu_metrics['percent']:.1f}%")
+                print(f"  Per CPU: {[round(v, 1) for v in cpu_metrics['per_cpu']]}")
+                if cpu_metrics.get('frequency_mhz') is not None:
+                    print(f"  Frequency: {cpu_metrics['frequency_mhz']:.0f} MHz")
+            else:
+                print(f"\nCPU metrics unavailable ({cpu_metrics.get('reason')})")
+
+        memory_metrics = sys_metrics.get('memory')
+        if memory_metrics:
+            print("\nMemory:")
+            print(f"  Used: {memory_metrics['used_gb']:.2f} GB / {memory_metrics['total_gb']:.2f} GB ({memory_metrics['percent']:.1f}% used)")
+
+        gpu_metrics = sys_metrics.get('gpu') or []
+        if gpu_metrics:
+            print("\nGPU:")
+            for idx, gpu in enumerate(gpu_metrics):
+                prefix = f"  GPU {idx}:" if len(gpu_metrics) > 1 else "  "
+                print(f"{prefix} {gpu['name']} | Util: {gpu['util']}% | Mem: {gpu['memory_used']}/{gpu['memory_total']} MiB | Temp: {gpu['temperature']}°C")
+        else:
+            print("\nGPU: no data (nvidia-smi not available)")
+
+        network_metrics = sys_metrics.get('network')
+        if network_metrics:
+            print("\nNetwork IO:")
+            print(f"  Bytes Sent: {network_metrics['bytes_sent']/1024/1024:.2f} MB")
+            print(f"  Bytes Received: {network_metrics['bytes_recv']/1024/1024:.2f} MB")
+            print(f"  Avg Throughput: {network_metrics['throughput_mbps']:.2f} Mbps")
+            if network_metrics.get('duration'):
+                print(f"  Measurement Window: {network_metrics['duration']:.2f}s")
+        else:
+            print("\nNetwork IO: not collected")
         
         print(f"\nREAL-TIME SUITABILITY:")
         target_fps = 25  # Assuming 25 FPS target
@@ -154,6 +247,138 @@ class StreamingStats:
             print(f"⚠️  Frame intervals inconsistent ({intervals['mean']*1000:.1f}ms > {target_interval*1.5*1000:.1f}ms)")
         
         print("="*70)
+
+    def _build_latency_stats(self) -> Dict[str, Any]:
+        samples = list(self.latency_samples)
+        if not samples:
+            return {
+                "count": 0,
+                "latest": None,
+                "mean": 0.0,
+                "median": 0.0,
+                "std": 0.0,
+                "min": 0.0,
+                "max": 0.0,
+            }
+
+        return {
+            "count": len(samples),
+            "latest": samples[-1],
+            "mean": statistics.mean(samples),
+            "median": statistics.median(samples),
+            "std": statistics.stdev(samples) if len(samples) > 1 else 0.0,
+            "min": min(samples),
+            "max": max(samples),
+        }
+
+    def _collect_system_metrics(self) -> Dict[str, Any]:
+        metrics: Dict[str, Any] = {}
+        metrics["cpu"] = self._cpu_metrics()
+        metrics["memory"] = self._memory_metrics()
+        metrics["gpu"] = self._gpu_metrics()
+        network_metrics = self._network_metrics()
+        if network_metrics:
+            metrics["network"] = network_metrics
+        return metrics
+
+    def _cpu_metrics(self) -> Dict[str, Any]:
+        if not psutil:
+            return {"available": False, "reason": "psutil not installed"}
+        try:
+            if not self._psutil_primed:
+                psutil.cpu_percent(interval=None)
+                self._psutil_primed = True
+            per_cpu = psutil.cpu_percent(interval=None, percpu=True)
+            overall = float(sum(per_cpu) / len(per_cpu)) if per_cpu else float(psutil.cpu_percent(interval=None))
+            freq = psutil.cpu_freq()
+            return {
+                "available": True,
+                "percent": overall,
+                "per_cpu": per_cpu,
+                "frequency_mhz": freq.current if freq else None,
+                "logical_cores": psutil.cpu_count(logical=True),
+            }
+        except Exception as exc:  # pragma: no cover - diagnostics should not crash stats
+            logger.debug(f"CPU metrics collection failed: {exc}")
+            return {"available": False, "reason": str(exc)}
+
+    def _memory_metrics(self) -> Optional[Dict[str, Any]]:
+        if not psutil:
+            return None
+        try:
+            mem = psutil.virtual_memory()
+            return {
+                "total_gb": mem.total / (1024 ** 3),
+                "used_gb": (mem.total - mem.available) / (1024 ** 3),
+                "percent": mem.percent,
+            }
+        except Exception as exc:  # pragma: no cover
+            logger.debug(f"Memory metrics collection failed: {exc}")
+            return None
+
+    def _gpu_metrics(self) -> List[Dict[str, Any]]:
+        if not shutil.which("nvidia-smi"):
+            return []
+        try:
+            result = subprocess.run(
+                [
+                    "nvidia-smi",
+                    "--query-gpu=name,memory.total,memory.used,utilization.gpu,utilization.memory,temperature.gpu",
+                    "--format=csv,noheader,nounits",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+        except (subprocess.SubprocessError, FileNotFoundError) as exc:  # pragma: no cover
+            logger.debug(f"GPU metrics collection failed: {exc}")
+            return []
+
+        gpus: List[Dict[str, Any]] = []
+        for line in result.stdout.strip().splitlines():
+            if not line.strip():
+                continue
+            parts = [part.strip() for part in line.split(",")]
+            if len(parts) < 6:
+                continue
+            name, mem_total, mem_used, util_gpu, util_mem, temperature = parts[:6]
+            gpus.append(
+                {
+                    "name": name,
+                    "memory_total": f"{mem_total} MiB",
+                    "memory_used": f"{mem_used} MiB",
+                    "util": float(util_gpu),
+                    "memory_util": float(util_mem),
+                    "temperature": float(temperature),
+                }
+            )
+        return gpus
+
+    def _network_metrics(self) -> Optional[Dict[str, Any]]:
+        if not psutil or not self.streaming_start_time:
+            return None
+        if not self._net_io_start:
+            return None
+        try:
+            current = psutil.net_io_counters()
+        except Exception as exc:  # pragma: no cover
+            logger.debug(f"Network metrics collection failed: {exc}")
+            return None
+
+        duration = max(time.time() - self.streaming_start_time, 0.0)
+        sent_delta = max(current.bytes_sent - self._net_io_start.bytes_sent, 0)
+        recv_delta = max(current.bytes_recv - self._net_io_start.bytes_recv, 0)
+        total_bytes = sent_delta + recv_delta
+
+        throughput_mbps = (total_bytes * 8) / (duration * 1_000_000) if duration > 0 else 0.0
+
+        return {
+            "bytes_sent": sent_delta,
+            "bytes_recv": recv_delta,
+            "throughput_mbps": throughput_mbps,
+            "duration": duration,
+        }
 
 
 class StreamingClient:
@@ -198,7 +423,7 @@ class StreamingClient:
         try:
             await self.websocket.send(json.dumps(message))
             logger.info("Sent start streaming command")
-            self.stats.streaming_start_time = time.time()
+            self.stats.mark_streaming_start()
             return True
         except Exception as e:
             logger.error(f"Failed to send start streaming command: {e}")
@@ -269,15 +494,19 @@ class StreamingClient:
 
         decode_start = time.time()
         frame_size = len(frame_bytes)
+        frame_array = np.frombuffer(frame_bytes, dtype=np.uint8)
+        frame_img = cv2.imdecode(frame_array, cv2.IMREAD_COLOR)
+        decode_time = time.time() - decode_start
+
+        if frame_img is None:
+            logger.warning(f"Failed to decode frame {frame_id}")
+            return
 
         if self.save_frames:
-            frame_array = np.frombuffer(frame_bytes, dtype=np.uint8)
-            frame_img = cv2.imdecode(frame_array, cv2.IMREAD_COLOR)
             import os
+
             os.makedirs(self.frame_save_dir, exist_ok=True)
             cv2.imwrite(f"{self.frame_save_dir}/frame_{frame_id:06d}.webp", frame_img)
-
-        decode_time = time.time() - decode_start
 
         frame_stats = FrameStats(
             frame_id=frame_id,
@@ -319,17 +548,45 @@ class StreamingClient:
         """Send periodic ping to server"""
         if not self.websocket:
             return
-        
+
         try:
             await self.websocket.send(json.dumps({"type": "ping"}))
         except Exception as e:
             logger.error(f"Error sending ping: {e}")
-    
+
     async def close(self):
         """Close connection to server"""
         if self.websocket:
             await self.websocket.close()
             logger.info("Disconnected from server")
+
+    async def monitor_latency(self, interval: float = 5.0):
+        """Periodically sample WebSocket RTT using control ping/pong."""
+        if not self.websocket:
+            return
+
+        try:
+            while True:
+                if not self.websocket or self.websocket.closed:
+                    break
+
+                try:
+                    pong_waiter = await self.websocket.ping()
+                    latency = await pong_waiter
+                    if latency is None and hasattr(self.websocket, "latency"):
+                        latency = getattr(self.websocket, "latency")
+                    self.stats.record_latency(latency)
+                except ConnectionClosed:
+                    break
+                except Exception as exc:
+                    logger.debug(f"Latency probe failed: {exc}")
+                    break
+
+                await asyncio.sleep(interval)
+        finally:
+            # ensure we capture final latency snapshot if websocket exposes it
+            if self.websocket and hasattr(self.websocket, "latency"):
+                self.stats.record_latency(getattr(self.websocket, "latency"))
 
 
 async def main():
@@ -373,12 +630,19 @@ async def main():
         if not await client.start_streaming(args.audio_path, args.source_path, streaming_config):
             return
         
+        listen_task = asyncio.create_task(client.listen())
+        latency_task = asyncio.create_task(client.monitor_latency())
+
         # Listen for messages with timeout
         try:
-            await asyncio.wait_for(client.listen(), timeout=args.timeout)
+            await asyncio.wait_for(listen_task, timeout=args.timeout)
         except asyncio.TimeoutError:
             logger.info("Timeout reached, stopping...")
-        
+        finally:
+            latency_task.cancel()
+            listen_task.cancel()
+            await asyncio.gather(listen_task, latency_task, return_exceptions=True)
+
         # Print final statistics
         client.stats.print_stats()
         
