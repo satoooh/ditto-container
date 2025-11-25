@@ -64,10 +64,12 @@ ENV PIP_EXTRA_INDEX_URL=https://pypi.org/simple
 # Install PyTorch with CUDA support first
 RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 
-# Install TensorRT and other dependencies
-# Explicitly prefer NVIDIA's index for TensorRT wheels; fall back to PyPI for shared deps
-RUN pip install --index-url https://pypi.nvidia.com --extra-index-url https://pypi.org/simple \
-    tensorrt==8.6.0 \
+# Install TensorRT (8.6.1) from NVIDIA NGC index to avoid sdist fallback,
+# then install the rest of Python deps from PyPI
+RUN PIP_INDEX_URL=https://pypi.ngc.nvidia.com \
+    PIP_EXTRA_INDEX_URL="https://pypi.nvidia.com https://pypi.org/simple" \
+    pip install --prefer-binary tensorrt==8.6.1 && \
+    pip install --extra-index-url https://pypi.org/simple \
     librosa \
     tqdm \
     filetype \
