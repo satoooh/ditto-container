@@ -67,7 +67,7 @@ RUN pip install torch torchvision torchaudio --index-url https://download.pytorc
 # Install TensorRT and other dependencies
 # Explicitly prefer NVIDIA's index for TensorRT wheels; fall back to PyPI for shared deps
 RUN pip install --index-url https://pypi.nvidia.com --extra-index-url https://pypi.org/simple \
-    tensorrt==8.6.1 \
+    tensorrt==8.6.0 \
     librosa \
     tqdm \
     filetype \
