@@ -19,6 +19,7 @@ RUN apt-get update && apt-get install -y \
     vim \
     wget \
     curl \
+    gnupg \
     build-essential \
     cmake \
     pkg-config \
@@ -64,12 +65,22 @@ ENV PIP_EXTRA_INDEX_URL=https://pypi.org/simple
 # Install PyTorch with CUDA support first
 RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 
-# Install TensorRT (8.6.1) from NVIDIA NGC index to avoid sdist fallback,
-# then install the rest of Python deps from PyPI
-RUN PIP_INDEX_URL=https://pypi.ngc.nvidia.com \
-    PIP_EXTRA_INDEX_URL="https://pypi.nvidia.com https://pypi.org/simple" \
-    pip install --prefer-binary tensorrt==8.6.1 && \
-    pip install --extra-index-url https://pypi.org/simple \
+# Add NVIDIA ML repo and install TensorRT 8.6.1 runtime + Python bindings (CUDA 11.8)
+RUN wget -qO /usr/share/keyrings/nvidia-ml-keyring.gpg https://developer.download.nvidia.com/compute/machine-learning/repos/ubuntu2204/x86_64/7fa2af80.pub \
+    && echo "deb [signed-by=/usr/share/keyrings/nvidia-ml-keyring.gpg] https://developer.download.nvidia.com/compute/machine-learning/repos/ubuntu2204/x86_64/ /" > /etc/apt/sources.list.d/nvidia-ml.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libnvinfer8=8.6.1-1+cuda11.8 \
+        libnvinfer-plugin8=8.6.1-1+cuda11.8 \
+        libnvonnxparsers8=8.6.1-1+cuda11.8 \
+        libnvparsers8=8.6.1-1+cuda11.8 \
+        libnvinfer-dev=8.6.1-1+cuda11.8 \
+        libnvinfer-plugin-dev=8.6.1-1+cuda11.8 \
+        python3-libnvinfer=8.6.1-1+cuda11.8 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install remaining Python dependencies (TensorRT is provided by apt above)
+RUN pip install --extra-index-url https://pypi.org/simple \
     librosa \
     tqdm \
     filetype \
