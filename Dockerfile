@@ -65,8 +65,8 @@ ENV PIP_EXTRA_INDEX_URL=https://pypi.org/simple
 RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 
 # Install TensorRT and other dependencies
-# Note: keep explicit extra index here as well for clarity, though ENV covers sub-installs
-RUN pip install --extra-index-url https://pypi.org/simple \
+# Explicitly prefer NVIDIA's index for TensorRT wheels; fall back to PyPI for shared deps
+RUN pip install --index-url https://pypi.nvidia.com --extra-index-url https://pypi.org/simple \
     tensorrt==8.6.1 \
     librosa \
     tqdm \
