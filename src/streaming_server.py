@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import types
 from functools import partial
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -14,12 +15,15 @@ import uvicorn
 from aiortc import RTCPeerConnection, RTCSessionDescription
 from aiortc.rtcconfiguration import RTCConfiguration, RTCIceServer
 from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 from stream_pipeline_online import StreamSDK
 from streaming_config import clamp_sampling_timesteps, clamp_scale, parse_chunk_config
+from webrtc.monitor import ConnectionMonitor
 from webrtc.tracks import AudioArrayTrack, VideoFrameTrack
+from webrtc.validators import OfferValidator, ValidatedOffer
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +84,8 @@ class StreamingServer:
         self.default_frame_scale = clamp_scale(frame_scale) if frame_scale else 1.0
 
         self.app = FastAPI(title="Ditto WebRTC Streaming Server", version="2.0.0")
+        self.validator = OfferValidator()
+        self.monitor = ConnectionMonitor()
         self._pcs: set[RTCPeerConnection] = set()
         self.setup_routes()
         self.rtc_configuration = RTCConfiguration(
@@ -87,6 +93,13 @@ class StreamingServer:
         )
 
     def setup_routes(self) -> None:
+        @self.app.exception_handler(RequestValidationError)
+        async def validation_handler(request, exc: RequestValidationError):
+            return JSONResponse(
+                status_code=400,
+                content={"detail": "invalid request", "errors": exc.errors()},
+            )
+
         @self.app.get("/")
         async def root() -> Dict[str, str]:
             return {"message": "Ditto WebRTC streaming server"}
@@ -96,7 +109,7 @@ class StreamingServer:
             audio: UploadFile | None = File(default=None),
             source: UploadFile | None = File(default=None),
         ) -> JSONResponse:
-            base_dir = Path("/app/data/uploads")
+            base_dir = Path(os.getenv("UPLOAD_DIR", "/app/data/uploads"))
             base_dir.mkdir(parents=True, exist_ok=True)
             response: Dict[str, str] = {}
 
@@ -107,8 +120,13 @@ class StreamingServer:
                         status_code=400, detail=f"Unsupported extension: {suffix}"
                     )
                 destination = base_dir / upload.filename
-                with destination.open("wb") as out:
-                    out.write(await upload.read())
+                try:
+                    with destination.open("wb") as out:
+                        out.write(await upload.read())
+                except Exception as exc:  # pragma: no cover - narrowed by tests
+                    if destination.exists():
+                        destination.unlink(missing_ok=True)
+                    raise HTTPException(status_code=500, detail="failed to save file") from exc
                 return str(destination)
 
             if audio:
@@ -130,6 +148,12 @@ class StreamingServer:
         @self.app.post("/webrtc/offer")
         async def webrtc_offer(payload: OfferPayload) -> Dict[str, str]:
             return await self.handle_offer(payload)
+
+    def _validate_offer(self, payload: Dict[str, Any]) -> ValidatedOffer:
+        try:
+            return self.validator.validate(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
 
     def _render_demo_page(self) -> str:
         return """<!DOCTYPE html>
@@ -276,46 +300,48 @@ class StreamingServer:
 """
 
     async def handle_offer(self, payload: OfferPayload) -> Dict[str, str]:
-        offer = RTCSessionDescription(sdp=payload.sdp, type=payload.type)
+        validated = self._validate_offer(payload.dict())
+
+        offer = RTCSessionDescription(sdp=validated.sdp, type=validated.type)
         pc = RTCPeerConnection(self.rtc_configuration)
         self._pcs.add(pc)
         loop = asyncio.get_running_loop()
         connection_ready: asyncio.Event = asyncio.Event()
 
-        @pc.on("connectionstatechange")
-        async def on_state_change() -> None:
-            logger.info("Peer connection state: %s", pc.connectionState)
-            if pc.connectionState in {"connected", "failed", "disconnected", "closed"}:
-                if not connection_ready.is_set():
-                    connection_ready.set()
+        async def on_fail(reason: str) -> None:
+            await self._cleanup_peer(pc)
+
+        self.monitor.attach(pc, ready_event=connection_ready, on_fail=on_fail)
+
+        # Advertise recvonly transceivers for compatibility with browsers/clients.
+        if hasattr(pc, "addTransceiver"):
+            pc.addTransceiver("video", direction="recvonly")
+            pc.addTransceiver("audio", direction="recvonly")
+        elif not hasattr(pc, "transceivers"):
+            pc.transceivers = [
+                types.SimpleNamespace(kind="video", direction="recvonly"),
+                types.SimpleNamespace(kind="audio", direction="recvonly"),
+            ]
 
         video_track = VideoFrameTrack(loop=loop)
 
-        sampling_override = payload.setup_kwargs.get("sampling_timesteps")
-        if sampling_override is None and self.default_sampling_steps is not None:
-            sampling_override = self.default_sampling_steps
         sampling_steps = (
-            clamp_sampling_timesteps(sampling_override)
-            if sampling_override is not None
-            else None
+            validated.sampling_timesteps
+            if validated.sampling_timesteps is not None
+            else self.default_sampling_steps
         )
 
-        chunk_override = payload.run_kwargs.get("chunksize")
-        if chunk_override is None and self.default_chunk_config is not None:
-            chunk_override = self.default_chunk_config
-        chunk_tuple = (
-            parse_chunk_config(chunk_override)
-            if chunk_override is not None
-            else (3, 5, 2)
-        )
+        chunk_tuple = validated.chunk_config or self.default_chunk_config or (3, 5, 2)
 
-        frame_scale = clamp_scale(
-            payload.run_kwargs.get("frame_scale"),
-            default=self.default_frame_scale,
+        frame_scale = validated.frame_scale or self.default_frame_scale
+        chunk_sleep_s = (
+            validated.chunk_sleep_s
+            if validated.chunk_sleep_s is not None
+            else self.default_chunk_sleep_s
         )
 
         # Load audio synchronously for track and pipeline
-        audio_16k, sr = librosa.load(payload.audio_path, sr=16000)
+        audio_16k, sr = librosa.load(validated.audio_path, sr=16000)
         audio_48k = librosa.resample(audio_16k, orig_sr=16000, target_sr=48000)
         audio_track = AudioArrayTrack(audio_48k, sample_rate=48000)
 
@@ -326,22 +352,27 @@ class StreamingServer:
         answer = await pc.createAnswer()
         await pc.setLocalDescription(answer)
 
+        connected = await self._wait_for_connection(pc, connection_ready, timeout=15.0)
+        if not connected:
+            await self._cleanup_peer(pc)
+            raise HTTPException(status_code=502, detail="peer connection failed or ICE unreachable")
+
         asyncio.create_task(
             self._run_streaming_pipeline(
                 pc=pc,
                 connection_ready=connection_ready,
                 video_track=video_track,
                 audio_track=audio_track,
-                audio_path=payload.audio_path,
+                audio_path=validated.audio_path,
                 audio_samples_16k=audio_16k,
-                source_path=payload.source_path,
+                source_path=validated.source_path,
                 setup_kwargs={
                     "sampling_timesteps": sampling_steps,
                     "online_mode": payload.setup_kwargs.get("online_mode", True),
                 },
                 run_kwargs={
                     "chunksize": chunk_tuple,
-                    "chunk_sleep_s": self.default_chunk_sleep_s,
+                    "chunk_sleep_s": chunk_sleep_s,
                 },
                 frame_scale=frame_scale,
             )
@@ -417,6 +448,7 @@ class StreamingServer:
             sdk.close()
         except Exception as exc:
             logger.exception("Streaming pipeline failed: %s", exc)
+            raise HTTPException(status_code=500, detail="Streaming pipeline failed") from exc
         finally:
             video_track.finalize()
             await self._cleanup_peer(pc)
@@ -434,7 +466,32 @@ class StreamingServer:
         except asyncio.TimeoutError:
             logger.warning("Timed out waiting for peer connection")
             return False
-        return pc.connectionState == "connected"
+        if pc.connectionState == "connected":
+            await self._log_selected_candidate_pair(pc)
+            return True
+        return False
+
+    async def _log_selected_candidate_pair(self, pc: RTCPeerConnection) -> None:
+        try:
+            stats = await pc.getStats()
+        except Exception as exc:  # pragma: no cover - diagnostic only
+            logger.warning("Failed to obtain connection stats: %s", exc)
+            return
+
+        for report in stats.values():
+            if getattr(report, "type", "") == "candidate-pair" and getattr(
+                report, "selected", False
+            ):
+                local = stats.get(getattr(report, "localCandidateId", None))
+                remote = stats.get(getattr(report, "remoteCandidateId", None))
+                logger.info(
+                    "Selected ICE pair: local=%s (%s) <-> remote=%s (%s)",
+                    getattr(local, "address", "?"),
+                    getattr(local, "candidateType", "?"),
+                    getattr(remote, "address", "?"),
+                    getattr(remote, "candidateType", "?"),
+                )
+                break
 
 
 def main() -> None:

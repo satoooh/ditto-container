@@ -77,6 +77,13 @@ pip install -r requirements-dev.txt
 Docker コンテナを使う場合は `./setup.sh all` を再実行してイメージを再ビルドしてください（Dockerfile に WebRTC 依存を追加済み）。
 `docker-compose.yml` は `network_mode: host` を利用するよう変更済みなので、外部アクセス時にもホストのパブリック IP が ICE 候補として利用されます。
 
+### 4-2.1. 最短デモの手順
+- GPU 環境での起動〜接続のコマンドをまとめた `docs/WEBRTC_DEMO.md` を参照してください。
+- GPU が無い Mac などでは、シグナリングのスモークとして次を実行できます（実ストリームなし）。
+```bash
+PYTHONPATH=src:. ./.venv/bin/pytest -q src/tests/test_e2e_smoke.py::test_offer_smoke_frame_scale
+```
+
 ### 4-3. サーバー起動
 ```bash
 cd /app/src
@@ -110,11 +117,14 @@ python streaming_client.py \
 - 「Start」を押すとブラウザが WebRTC で接続し、低レイテンシで映像・音声を再生します。
 - `Frame Scale` や `Sampling Steps` をページ上で変更して、帯域と画質のトレードオフを即座に確認できます。
 - 必要に応じて `Upload Audio` / `Upload Image` でファイルをアップロードすると、保存先パスが自動で入力欄に反映されます。
+- Docker を利用する場合は `network_mode: host` を指定した `docker-compose.yml` を利用してください。ホストのパブリック IP が ICE 候補に含まれ、外部ブラウザからの接続が成功しやすくなります。
+- Symmetric NAT や企業ネットワークから接続する場合は TURN サーバの導入を検討してください（`streaming_server.py` の `RTCConfiguration` に `turn:` URL を追加）。
 
 ### 4-6. 品質プリセットの目安
 - **画質優先**: `frame_scale=0.6`, `sampling_steps=15`（帯域 ≈1 Mbps / ≈12 FPS）。
 - **遅延優先**: `frame_scale=0.3`, `sampling_steps=10`, `chunk_config=2,3,2`（帯域 ≈0.3 Mbps / ≈17 FPS）。
   - CPU/GPU の余裕を見ながら数値を調整してください。`--record-file` で受信映像を保存し、画質チェックが可能です。
+- **TURN を使った接続**: Symmetric NAT や VPN 環境では STUN のみでは失敗する場合があります。coturn などで TURN サーバを立て、`RTCConfiguration` とブラウザ JS 双方に `turn:` URL を追加してください。
 
 ### 4-7. リモートクライアント
 - サーバーと異なるマシンで CLI を動かす手順は [`src/REMOTE_CLIENT_SETUP.md`](src/REMOTE_CLIENT_SETUP.md) にまとめています。
