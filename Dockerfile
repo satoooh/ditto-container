@@ -51,13 +51,14 @@ RUN apt-get update && apt-get install -y \
 # Upgrade pip
 RUN python -m pip install --upgrade pip
 
-# Pin ABI-sensitive dependencies (override any base image versions)
-RUN pip install --no-cache-dir --upgrade --force-reinstall \
-    numpy==1.26.4 \
-    opencv-python-headless==4.8.1.78
-
 # Reduce layer size by disabling pip cache
 ENV PIP_NO_CACHE_DIR=1
+# Prevent user-site packages from shadowing pinned deps
+ENV PYTHONNOUSERSITE=1
+
+# Global constraints to keep numpy/opencv at ABI-safe versions
+RUN printf "numpy==1.26.4\nopencv-python-headless==4.8.1.78\n" > /tmp/pip-constraints.txt
+ENV PIP_CONSTRAINT=/tmp/pip-constraints.txt
 
 # Ensure pip can fall back to PyPI when NVIDIA's index lacks a dependency
 # (e.g., tensorrt_libs -> nvidia-cublas-cu12 is not on https://pypi.nvidia.com)
