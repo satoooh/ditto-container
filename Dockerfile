@@ -69,9 +69,11 @@ ENV PIP_EXTRA_INDEX_URL=https://pypi.org/simple
 RUN pip install --index-url https://download.pytorch.org/whl/cu118 \
     torch==2.1.2 torchvision==0.16.2 torchaudio==2.1.2
 
-# Add NVIDIA ML repo and install TensorRT 8.6.1 runtime + Python bindings (CUDA 11.8)
-RUN wget -qO /usr/share/keyrings/nvidia-ml-keyring.gpg https://developer.download.nvidia.com/compute/machine-learning/repos/ubuntu2204/x86_64/7fa2af80.pub \
-    && echo "deb [signed-by=/usr/share/keyrings/nvidia-ml-keyring.gpg] https://developer.download.nvidia.com/compute/machine-learning/repos/ubuntu2204/x86_64/ /" > /etc/apt/sources.list.d/nvidia-ml.list \
+# Add NVIDIA CUDA keyring (machine-learning repo key URL was deprecated) and install TensorRT 8.6.1 (CUDA 11.8)
+RUN wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb \
+    && dpkg -i cuda-keyring_1.1-1_all.deb \
+    && rm cuda-keyring_1.1-1_all.deb \
+    && echo "deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/ /" > /etc/apt/sources.list.d/cuda.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
         libnvinfer8=8.6.1-1+cuda11.8 \
