@@ -32,7 +32,8 @@ class ConnectionMonitor:
             nonlocal has_failed
             state = getattr(pc, "connectionState", None)
             logger.info("Peer connection state: %s", state)
-            if not ready_event.is_set():
+            # Signal readiness only on terminal or connected states to avoid false early wake-ups.
+            if state in {"connected", "failed", "disconnected", "closed"} and not ready_event.is_set():
                 ready_event.set()
             if state in {"failed", "disconnected", "closed"} and not has_failed:
                 has_failed = True
@@ -42,4 +43,5 @@ class ConnectionMonitor:
         async def on_ice_state_change() -> None:
             state = getattr(pc, "iceConnectionState", None)
             logger.info("ICE connection state: %s", state)
-
+            if state in {"failed", "disconnected", "closed"} and not ready_event.is_set():
+                ready_event.set()

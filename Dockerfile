@@ -68,14 +68,14 @@ RUN pip install --extra-index-url https://pypi.org/simple \
     tqdm \
     filetype \
     imageio \
-    opencv-python-headless \
+    opencv-python-headless==4.8.1.78 \
     scikit-image \
     cython \
     cuda-python==11.8.* \
     imageio-ffmpeg \
     colored \
     polygraphy \
-    numpy==2.0.1 \
+    numpy==1.26.4 \
     fastapi \
     uvicorn[standard] \
     websockets \
