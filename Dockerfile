@@ -73,7 +73,10 @@ RUN pip install --index-url https://download.pytorch.org/whl/cu118 \
 RUN wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb \
     && dpkg -i cuda-keyring_1.1-1_all.deb \
     && rm cuda-keyring_1.1-1_all.deb \
-    && echo "deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/ /" > /etc/apt/sources.list.d/cuda.list \
+    # 既存の CUDA リポ行と衝突する signed-by を統一
+    && sed -i '/compute\\/cuda\\/repos\\/ubuntu2204\\/x86_64/d' /etc/apt/sources.list.d/cuda.list || true \
+    && echo "deb [signed-by=/usr/share/keyrings/cuda-archive-keyring.gpg] https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/ /" > /etc/apt/sources.list.d/cuda.list \
+    && rm -f /etc/apt/sources.list.d/nvidia-ml.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
         libnvinfer8=8.6.1-1+cuda11.8 \
