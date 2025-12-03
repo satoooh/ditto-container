@@ -1,5 +1,6 @@
-# Use NVIDIA CUDA base image with Ubuntu
-FROM nvidia/cuda:11.8.0-devel-ubuntu22.04
+# Use NVIDIA TensorRT base image (CUDA 11.8, TensorRT 8.6.1, Ubuntu 22.04)
+# Requires: docker login nvcr.io (NGC API key)
+FROM nvcr.io/nvidia/tensorrt:23.06-py3
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
@@ -8,7 +9,7 @@ ENV CUDA_HOME=/usr/local/cuda
 ENV PATH=$CUDA_HOME/bin:$PATH
 ENV LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
 
-# Install system dependencies
+# Install system dependencies (TensorRT libs already present)
 RUN apt-get update && apt-get install -y \
     python3.10 \
     python3.10-dev \
@@ -45,15 +46,7 @@ RUN apt-get update && apt-get install -y \
     libasound2-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install cuDNN
-RUN apt-get update && apt-get install -y \
-    libcudnn8=8.9.7.29-1+cuda11.8 \
-    libcudnn8-dev=8.9.7.29-1+cuda11.8 \
-    && rm -rf /var/lib/apt/lists/*
-
-# Set python3.10 as default python
-RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.10 1
-RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.10 1
+# cuDNN / TensorRT are already included in the base image
 
 # Upgrade pip
 RUN python -m pip install --upgrade pip
@@ -69,26 +62,7 @@ ENV PIP_EXTRA_INDEX_URL=https://pypi.org/simple
 RUN pip install --index-url https://download.pytorch.org/whl/cu118 \
     torch==2.1.2 torchvision==0.16.2 torchaudio==2.1.2
 
-# Add NVIDIA CUDA keyring (machine-learning repo key URL was deprecated) and install TensorRT 8.6.1 (CUDA 11.8)
-RUN wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb \
-    && dpkg -i cuda-keyring_1.1-1_all.deb \
-    && rm cuda-keyring_1.1-1_all.deb \
-    # 既存の CUDA リポ行と衝突する signed-by を統一
-    && sed -i '/compute\\/cuda\\/repos\\/ubuntu2204\\/x86_64/d' /etc/apt/sources.list.d/cuda.list || true \
-    && echo "deb [signed-by=/usr/share/keyrings/cuda-archive-keyring.gpg] https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/ /" > /etc/apt/sources.list.d/cuda.list \
-    && rm -f /etc/apt/sources.list.d/nvidia-ml.list \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends \
-        libnvinfer8=8.6.1-1+cuda11.8 \
-        libnvinfer-plugin8=8.6.1-1+cuda11.8 \
-        libnvonnxparsers8=8.6.1-1+cuda11.8 \
-        libnvparsers8=8.6.1-1+cuda11.8 \
-        libnvinfer-dev=8.6.1-1+cuda11.8 \
-        libnvinfer-plugin-dev=8.6.1-1+cuda11.8 \
-        python3-libnvinfer=8.6.1-1+cuda11.8 \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install remaining Python dependencies (TensorRT is provided by apt above)
+# Install remaining Python dependencies (TensorRT is provided by base image)
 RUN pip install --extra-index-url https://pypi.org/simple \
     librosa \
     tqdm \
@@ -125,4 +99,4 @@ RUN useradd -m -u 1000 user && chown -R user:user /app
 USER user
 
 # Set the default command
-CMD ["/bin/bash"] 
+CMD ["/bin/bash"]

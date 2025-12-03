@@ -28,7 +28,12 @@ git clone https://huggingface.co/digital-avatar/ditto-talkinghead checkpoints
 - 異なる GPU を利用する場合は `python src/scripts/cvt_onnx_to_trt.py` で再生成
 
 ### 2-3. コンテナのビルドと起動
+
+> NGC (nvcr.io) の TensorRT ベースイメージを利用するため、事前に `docker login nvcr.io` が必要です。  
+> ユーザー名: `$oauthtoken` / パスワード: NGC の API key（https://ngc.nvidia.com/profile から発行）。
+
 ```bash
+docker login nvcr.io
 ./setup.sh all     # build + run
 ```
 `./setup.sh` は以下を実行します。
