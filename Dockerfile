@@ -51,6 +51,11 @@ RUN apt-get update && apt-get install -y \
 # Upgrade pip
 RUN python -m pip install --upgrade pip
 
+# Pin ABI-sensitive dependencies (override any base image versions)
+RUN pip install --no-cache-dir --upgrade --force-reinstall \
+    numpy==1.26.4 \
+    opencv-python-headless==4.8.1.78
+
 # Reduce layer size by disabling pip cache
 ENV PIP_NO_CACHE_DIR=1
 
@@ -68,7 +73,6 @@ RUN pip install --extra-index-url https://pypi.org/simple \
     tqdm \
     filetype \
     imageio \
-    opencv-python-headless==4.8.1.78 \
     scikit-image \
     cython \
     cuda-python==11.8.* \
