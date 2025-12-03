@@ -3,11 +3,15 @@
 FROM nvcr.io/nvidia/tensorrt:23.06-py3
 
 # Set environment variables
-ENV DEBIAN_FRONTEND=noninteractive
-ENV PYTHONUNBUFFERED=1
-ENV CUDA_HOME=/usr/local/cuda
-ENV PATH=$CUDA_HOME/bin:$PATH
-ENV LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    CUDA_HOME=/usr/local/cuda \
+    PATH=/usr/local/cuda/bin:$PATH \
+    LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONNOUSERSITE=1 \
+    PIP_BREAK_SYSTEM_PACKAGES=1 \
+    PIP_EXTRA_INDEX_URL=https://pypi.org/simple
 
 # Install system dependencies (TensorRT libs already present)
 RUN apt-get update && apt-get install -y \
@@ -57,20 +61,9 @@ RUN apt-get purge -y python3-numpy || true \
 # Upgrade pip
 RUN python -m pip install --upgrade pip
 
-# Remove preinstalled NumPy to avoid ABI mismatch (base image ships 2.x)
-RUN pip uninstall -y numpy || true \
-    && rm -rf /usr/local/lib/python3.10/dist-packages/numpy* \
-    && rm -rf /usr/local/lib/python3.10/dist-packages/numpy-*.dist-info
-
-# Reduce layer size by disabling pip cache
-ENV PIP_NO_CACHE_DIR=1
-# Prevent user-site packages from shadowing pinned deps
-ENV PYTHONNOUSERSITE=1
-# Allow pip to overwrite externally managed packages inside the image
-ENV PIP_BREAK_SYSTEM_PACKAGES=1
-
-# Ensure pip can fall back to PyPI when NVIDIA's index lacks a dependency
-ENV PIP_EXTRA_INDEX_URL=https://pypi.org/simple
+# Constraints to keep numpy/opencv at ABI-safe versions
+RUN printf "numpy==1.26.4\nopencv-python-headless==4.8.1.78\n" > /tmp/pip-constraints.txt
+ENV PIP_CONSTRAINT=/tmp/pip-constraints.txt
 
 # Pin numpy/opencv first with ignore-installed to override any leftovers
 RUN pip install --no-cache-dir --upgrade --ignore-installed \

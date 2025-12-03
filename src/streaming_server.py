@@ -88,9 +88,8 @@ class StreamingServer:
         self.monitor = ConnectionMonitor()
         self._pcs: set[RTCPeerConnection] = set()
         self.setup_routes()
-        self.rtc_configuration = RTCConfiguration(
-            iceServers=[RTCIceServer(urls=["stun:stun.l.google.com:19302"])]
-        )
+        # STUN を無効にし、ホスト内接続を優先（外部接続には TURN を追加する）
+        self.rtc_configuration = RTCConfiguration(iceServers=[])
 
     def setup_routes(self) -> None:
         @self.app.exception_handler(RequestValidationError)
