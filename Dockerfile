@@ -51,10 +51,17 @@ RUN apt-get update && apt-get install -y \
 # Upgrade pip
 RUN python -m pip install --upgrade pip
 
+# Remove preinstalled NumPy to avoid ABI mismatch (base image ships 2.x)
+RUN pip uninstall -y numpy || true \
+    && rm -rf /usr/local/lib/python3.10/dist-packages/numpy* \
+    && rm -rf /usr/local/lib/python3.10/dist-packages/numpy-*.dist-info
+
 # Reduce layer size by disabling pip cache
 ENV PIP_NO_CACHE_DIR=1
 # Prevent user-site packages from shadowing pinned deps
 ENV PYTHONNOUSERSITE=1
+# Allow pip to overwrite externally managed packages inside the image
+ENV PIP_BREAK_SYSTEM_PACKAGES=1
 
 # Global constraints to keep numpy/opencv at ABI-safe versions
 RUN printf "numpy==1.26.4\nopencv-python-headless==4.8.1.78\n" > /tmp/pip-constraints.txt
@@ -80,7 +87,6 @@ RUN pip install --extra-index-url https://pypi.org/simple \
     imageio-ffmpeg \
     colored \
     polygraphy \
-    numpy==1.26.4 \
     fastapi \
     uvicorn[standard] \
     websockets \
@@ -89,10 +95,6 @@ RUN pip install --extra-index-url https://pypi.org/simple \
     aiortc \
     av \
     aiohttp
-
-# Ensure runtime uses pinned NumPy regardless of base image preinstalls
-RUN pip uninstall -y numpy || true \
-    && pip install --no-cache-dir --force-reinstall numpy==1.26.4
 
 # Create working directory
 WORKDIR /app
