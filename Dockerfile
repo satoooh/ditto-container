@@ -90,6 +90,10 @@ RUN pip install --extra-index-url https://pypi.org/simple \
     av \
     aiohttp
 
+# Ensure runtime uses pinned NumPy regardless of base image preinstalls
+RUN pip uninstall -y numpy || true \
+    && pip install --no-cache-dir --force-reinstall numpy==1.26.4
+
 # Create working directory
 WORKDIR /app
 
