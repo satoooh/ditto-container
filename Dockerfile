@@ -46,6 +46,12 @@ RUN apt-get update && apt-get install -y \
     libasound2-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Remove any distro-provided numpy to avoid ABI/version conflicts
+RUN apt-get purge -y python3-numpy || true \
+    && rm -rf /usr/lib/python3/dist-packages/numpy* \
+    && rm -rf /usr/local/lib/python3.10/dist-packages/numpy* \
+    && rm -rf /usr/local/lib/python3.10/dist-packages/numpy-*.dist-info
+
 # cuDNN / TensorRT are already included in the base image
 
 # Upgrade pip
@@ -63,16 +69,16 @@ ENV PYTHONNOUSERSITE=1
 # Allow pip to overwrite externally managed packages inside the image
 ENV PIP_BREAK_SYSTEM_PACKAGES=1
 
-# Global constraints to keep numpy/opencv at ABI-safe versions
-RUN printf "numpy==1.26.4\nopencv-python-headless==4.8.1.78\n" > /tmp/pip-constraints.txt
-ENV PIP_CONSTRAINT=/tmp/pip-constraints.txt
-
 # Ensure pip can fall back to PyPI when NVIDIA's index lacks a dependency
-# (e.g., tensorrt_libs -> nvidia-cublas-cu12 is not on https://pypi.nvidia.com)
 ENV PIP_EXTRA_INDEX_URL=https://pypi.org/simple
 
-# Install PyTorch with CUDA 11.8 wheels (pinned to avoid cu12 split packages that bloat image)
-RUN pip install --index-url https://download.pytorch.org/whl/cu118 \
+# Pin numpy/opencv first with ignore-installed to override any leftovers
+RUN pip install --no-cache-dir --upgrade --ignore-installed \
+    numpy==1.26.4 \
+    opencv-python-headless==4.8.1.78
+
+# Install PyTorch with CUDA 11.8 wheels (pinned to avoid cu12 split packages)
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu118 \
     torch==2.1.2 torchvision==0.16.2 torchaudio==2.1.2
 
 # Install remaining Python dependencies (TensorRT is provided by base image)
