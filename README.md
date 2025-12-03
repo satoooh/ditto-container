@@ -76,6 +76,7 @@ pip install -r requirements-dev.txt
 
 Docker コンテナを使う場合は `./setup.sh all` を再実行してイメージを再ビルドしてください（Dockerfile に WebRTC 依存を追加済み）。
 `docker-compose.yml` は `network_mode: host` を利用するよう変更済みなので、外部アクセス時にもホストのパブリック IP が ICE 候補として利用されます。
+CUDA 11.8 ベースのため `cuda-python==11.8.x` を利用し、NVIDIA ドライバは 525 以上を目安にしてください。
 
 ### 4-2.1. 最短デモの手順
 - GPU 環境での起動〜接続のコマンドをまとめた `docs/WEBRTC_DEMO.md` を参照してください。

@@ -58,12 +58,16 @@ RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.10 1
 # Upgrade pip
 RUN python -m pip install --upgrade pip
 
+# Reduce layer size by disabling pip cache
+ENV PIP_NO_CACHE_DIR=1
+
 # Ensure pip can fall back to PyPI when NVIDIA's index lacks a dependency
 # (e.g., tensorrt_libs -> nvidia-cublas-cu12 is not on https://pypi.nvidia.com)
 ENV PIP_EXTRA_INDEX_URL=https://pypi.org/simple
 
-# Install PyTorch with CUDA support first
-RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+# Install PyTorch with CUDA 11.8 wheels (pinned to avoid cu12 split packages that bloat image)
+RUN pip install --index-url https://download.pytorch.org/whl/cu118 \
+    torch==2.1.2 torchvision==0.16.2 torchaudio==2.1.2
 
 # Add NVIDIA ML repo and install TensorRT 8.6.1 runtime + Python bindings (CUDA 11.8)
 RUN wget -qO /usr/share/keyrings/nvidia-ml-keyring.gpg https://developer.download.nvidia.com/compute/machine-learning/repos/ubuntu2204/x86_64/7fa2af80.pub \
@@ -88,7 +92,7 @@ RUN pip install --extra-index-url https://pypi.org/simple \
     opencv-python-headless \
     scikit-image \
     cython \
-    cuda-python==12.6.* \
+    cuda-python==11.8.* \
     imageio-ffmpeg \
     colored \
     polygraphy \
