@@ -83,6 +83,23 @@ Docker コンテナを使う場合は `./setup.sh all` を再実行してイメ�
 `docker-compose.yml` は `network_mode: host` を利用するよう変更済みなので、外部アクセス時にもホストのパブリック IP が ICE 候補として利用されます。
 CUDA 11.8 ベースのため `cuda-python==11.8.x` を利用し、NVIDIA ドライバは 525 以上を目安にしてください。
 
+### 2-4. fasterliveportrait-liveserver を TensorRT 23.12 で単発実行する例
+`fasterliveportrait-liveserver` ディレクトリにいる前提で、ビルド済みの grid plugin をプリロードしつつ起動するコマンド例です。venv を /tmp に作成して依存を隔離します。
+
+```bash
+docker login nvcr.io   # user: $oauthtoken / pass: NGC API key
+
+docker run --rm --gpus all -p 8000:8000 \
+  -e LD_PRELOAD=/work/build_grid_plugin/build/libgrid_sample_3d_plugin.so \
+  -e FLP_API_TOKEN=yourtoken \  # 認証不要ならこの行は削除
+  -v "$(pwd)":/work -w /work \
+  nvcr.io/nvidia/tensorrt:23.12-py3 \
+  bash -lc "apt-get update && apt-get install -y python3-venv && \
+    python3 -m venv /tmp/venv && . /tmp/venv/bin/activate && \
+    pip install --upgrade pip && pip install . && \
+    python -m uvicorn fasterliveportrait_liveserver.app:app --host 0.0.0.0 --port 8000"
+```
+
 ### 4-2.1. 最短デモの手順
 - GPU 環境での起動〜接続のコマンドをまとめた `docs/WEBRTC_DEMO.md` を参照してください。
 - GPU が無い Mac などでは、シグナリングのスモークとして次を実行できます（実ストリームなし）。
@@ -155,6 +172,8 @@ python streaming_client.py \
 ### 5-4. 参照資料（リポジトリ内）
 | ファイル | 内容 |
 |----------|------|
+| `docs/PROJECT_STATUS.md` | プロジェクト全体の進捗、既知課題、次アクション |
+| `docs/WEBRTC_DEMO.md` | WebRTC デモの最短実行手順 |
 | `src/STREAMING_SETUP.md` | ストリーミング構成の概要と構築手順 |
 | `src/STREAMING_OPTIMIZATIONS.md` | 最適化ポイントと検証方法 |
 | `src/README.md` | コンテナ内 `/app/src` 利用ガイド |
