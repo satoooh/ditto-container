@@ -1,5 +1,7 @@
 # Bandwidth Test Guide
 
+> Note: このガイドは WebSocket 帯域計測用の補助ツールです。現行の標準配信経路は WebRTC です。
+
 These scripts measure WebSocket throughput between your server and client to determine optimal streaming parameters.
 
 ## 🚀 Quick Start

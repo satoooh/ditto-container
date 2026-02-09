@@ -65,17 +65,23 @@ python streaming_server.py \
   --data_root "/app/checkpoints/ditto_trt_Ampere_Plus"
 ```
 主な特徴
-- FastAPI + WebSocket によりリアルタイム配信
+- FastAPI + WebRTC（aiortc）でリアルタイム配信
 - 起動時に TensorRT/StreamSDK をプリウォーム（初回フレーム短縮）
-- フレームはバイナリ WebSocket（ヘッダ `!IdI` + WebP）で送信。
-- キュー長と WebP 品質を監視し、混雑時に自動で品質を調整
+- 音声・映像を WebRTC トラックとして送出
+- セッションごとに `frame_scale` / `sampling_timesteps` などを調整可能
 - `/upload` エンドポイントでブラウザから音声・画像をアップロード可能
 
 ### クライアント/ブラウザ
-- ブラウザ: `http://<HOST>:8000/demo` （バイナリストリームを自動再生）
-- CLI: `python streaming_client.py --server ws://<HOST>:8000 --client_id test \
-    --audio_path /app/src/example/audio.wav --source_path /app/src/example/image.png`
-  - デフォルトでバイナリを受信。旧 JSON 経路を使う場合は `--transport json` を指定。
+- ブラウザ: `http://<HOST>:8000/demo` （WebRTC で自動再生）
+- CLI:
+  ```bash
+  python streaming_client.py \
+    --server http://<HOST>:8000 \
+    --audio_path /app/src/example/audio.wav \
+    --source_path /app/src/example/image.png \
+    --frame-scale 0.5 \
+    --sampling-timesteps 12
+  ```
 
 ## テスト
 ```bash
@@ -95,7 +101,7 @@ pytest
 ## トラブルシューティング
 - コンテナが即停止する → `setup.sh run` は `sleep infinity` にフォールバックしますが、ログ (`docker logs ditto-container`) を確認してください。
 - チェックポイントが読み込めない → `checkpoints/` のパーミッションを `1000:1000` に合わせる。
-- ストリーミングが遅い → `streaming_server.py` のログでキューサイズ・ドロップ数を確認。必要に応じて `--host`/`--port` や WebP 品質閾値を調整。
+- ストリーミングが遅い → `streaming_server.py` のログで接続状態と処理時間を確認。必要に応じて `frame_scale` / `sampling_timesteps` / `chunk_config` を調整。
 
 ## ライセンス
 - 同梱コードは Apache-2.0（上流 Ditto Talking Head と同一）。
