@@ -299,18 +299,17 @@ class StreamingServer:
 """
 
     async def handle_offer(self, payload: OfferPayload) -> Dict[str, str]:
-        validated = self._validate_offer(payload.dict())
+        validated = self._validate_offer(payload.model_dump())
 
         offer = RTCSessionDescription(sdp=validated.sdp, type=validated.type)
         pc = RTCPeerConnection(self.rtc_configuration)
         self._pcs.add(pc)
         loop = asyncio.get_running_loop()
-        connection_ready: asyncio.Event = asyncio.Event()
 
         async def on_fail(reason: str) -> None:
             await self._cleanup_peer(pc)
 
-        self.monitor.attach(pc, ready_event=connection_ready, on_fail=on_fail)
+        self.monitor.attach(pc, ready_event=asyncio.Event(), on_fail=on_fail)
 
         # Advertise recvonly transceivers for compatibility with browsers/clients.
         if hasattr(pc, "addTransceiver"):
@@ -350,16 +349,16 @@ class StreamingServer:
         await pc.setRemoteDescription(offer)
         answer = await pc.createAnswer()
         await pc.setLocalDescription(answer)
-
-        connected = await self._wait_for_connection(pc, connection_ready, timeout=15.0)
-        if not connected:
+        # Return SDP answer immediately. Waiting for "connected" here can deadlock:
+        # the client cannot complete the handshake until it receives this answer.
+        state = getattr(pc, "connectionState", None)
+        if state in {"failed", "disconnected", "closed"}:
             await self._cleanup_peer(pc)
             raise HTTPException(status_code=502, detail="peer connection failed or ICE unreachable")
 
         asyncio.create_task(
             self._run_streaming_pipeline(
                 pc=pc,
-                connection_ready=connection_ready,
                 video_track=video_track,
                 audio_track=audio_track,
                 audio_path=validated.audio_path,
@@ -385,7 +384,6 @@ class StreamingServer:
         pc: RTCPeerConnection,
         video_track: VideoFrameTrack,
         audio_track: AudioArrayTrack,
-        connection_ready: asyncio.Event,
         audio_path: str,
         audio_samples_16k: np.ndarray,
         source_path: str,
@@ -395,7 +393,7 @@ class StreamingServer:
     ) -> None:
         loop = asyncio.get_running_loop()
         try:
-            if not await self._wait_for_connection(pc, connection_ready):
+            if not await self._wait_for_connection(pc):
                 logger.warning(
                     "Peer connection did not reach connected state; aborting stream"
                 )
@@ -447,7 +445,7 @@ class StreamingServer:
             sdk.close()
         except Exception as exc:
             logger.exception("Streaming pipeline failed: %s", exc)
-            raise HTTPException(status_code=500, detail="Streaming pipeline failed") from exc
+            return
         finally:
             video_track.finalize()
             await self._cleanup_peer(pc)
@@ -458,17 +456,20 @@ class StreamingServer:
         await pc.close()
 
     async def _wait_for_connection(
-        self, pc: RTCPeerConnection, event: asyncio.Event, timeout: float = 15.0
+        self, pc: RTCPeerConnection, timeout: float = 60.0
     ) -> bool:
-        try:
-            await asyncio.wait_for(event.wait(), timeout)
-        except asyncio.TimeoutError:
-            logger.warning("Timed out waiting for peer connection")
-            return False
-        if pc.connectionState == "connected":
-            await self._log_selected_candidate_pair(pc)
-            return True
-        return False
+        deadline = asyncio.get_running_loop().time() + timeout
+        while True:
+            state = getattr(pc, "connectionState", None)
+            if state == "connected":
+                await self._log_selected_candidate_pair(pc)
+                return True
+            if state in {"failed", "disconnected", "closed"}:
+                return False
+            if asyncio.get_running_loop().time() >= deadline:
+                logger.warning("Timed out waiting for peer connection (state=%s)", state)
+                return False
+            await asyncio.sleep(0.5)
 
     async def _log_selected_candidate_pair(self, pc: RTCPeerConnection) -> None:
         try:

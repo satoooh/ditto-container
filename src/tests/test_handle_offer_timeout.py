@@ -1,12 +1,12 @@
 # Where: src/tests/test_handle_offer_timeout.py
-# What: Verify handle_offer aborts and cleans up when connection timeout occurs (task 3.3).
+# What: Verify /webrtc/offer still returns answer and pipeline cleanup happens on connection timeout (task 3.3).
 
 import sys
+import time
 import types
 from pathlib import Path
 
 import pytest
-from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 # Lightweight stubs to avoid heavy deps
@@ -122,5 +122,9 @@ def test_handle_offer_cleans_up_on_timeout(tmp_path, client):
     }
 
     resp = api.post("/webrtc/offer", json=payload)
-    assert resp.status_code == 502
+    assert resp.status_code == 200
+    for _ in range(20):
+        if len(server._pcs) == 0:
+            break
+        time.sleep(0.01)
     assert len(server._pcs) == 0

@@ -2,6 +2,7 @@
 # What: Ensure peer connections are removed from _pcs on completion or early fail (task 5.3).
 
 import sys
+import time
 import types
 from pathlib import Path
 
@@ -119,10 +120,14 @@ def test_peer_removed_after_success(api, tmp_path):
     )
 
     assert resp.status_code == 200
+    for _ in range(20):
+        if len(server._pcs) == 0:
+            break
+        time.sleep(0.01)
     assert len(server._pcs) == 0
 
 
-def test_peer_removed_after_connection_fail(api, monkeypatch, tmp_path):
+def test_peer_removed_after_connection_timeout(api, monkeypatch, tmp_path):
     server, client = api
     async def _wait_fail(*a, **k):
         return False
@@ -138,5 +143,9 @@ def test_peer_removed_after_connection_fail(api, monkeypatch, tmp_path):
         json={"sdp": "v=0", "type": "offer", "audio_path": str(audio), "source_path": str(img)},
     )
 
-    assert resp.status_code == 502
+    assert resp.status_code == 200
+    for _ in range(20):
+        if len(server._pcs) == 0:
+            break
+        time.sleep(0.01)
     assert len(server._pcs) == 0

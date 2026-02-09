@@ -1,7 +1,8 @@
 # Where: src/tests/test_offer_exception_cleanup.py
-# What: Integration-ish test to ensure /webrtc/offer returns 500 and cleans up when StreamSDK.setup raises (task 4.3).
+# What: Integration-ish test to ensure /webrtc/offer returns SDP answer and still cleans up when StreamSDK.setup raises (task 4.3).
 
 import sys
+import time
 import types
 from pathlib import Path
 
@@ -101,19 +102,18 @@ class BoomSDK:
         return None
 
 
-def test_offer_returns_500_on_sdk_setup_error(monkeypatch, tmp_path):
+def test_offer_returns_answer_and_cleans_up_on_sdk_setup_error(monkeypatch, tmp_path):
     audio = tmp_path / "a.wav"
     img = tmp_path / "b.png"
     audio.write_bytes(b"a")
     img.write_bytes(b"b")
 
-    # Fast-fail connection wait
-    async def _fail_wait(*args, **kwargs):
-        return False
+    async def _wait_ok(*args, **kwargs):
+        return True
 
     server = StreamingServer(cfg_pkl="/tmp/cfg.pkl", data_root="/tmp/data")
     monkeypatch.setattr("streaming_server.StreamSDK", BoomSDK)
-    monkeypatch.setattr(server, "_wait_for_connection", _fail_wait, raising=False)
+    monkeypatch.setattr(server, "_wait_for_connection", _wait_ok, raising=False)
     api = TestClient(server.app)
 
     resp = api.post(
@@ -126,6 +126,9 @@ def test_offer_returns_500_on_sdk_setup_error(monkeypatch, tmp_path):
         },
     )
 
-    assert resp.status_code == 502
-    assert "peer connection failed" in resp.json()["detail"]
+    assert resp.status_code == 200
+    for _ in range(40):
+        if len(server._pcs) == 0:
+            break
+        time.sleep(0.01)
     assert len(server._pcs) == 0

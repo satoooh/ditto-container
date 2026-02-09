@@ -1,5 +1,5 @@
 # Where: src/tests/test_handle_offer_ice_failure.py
-# What: Ensure /webrtc/offer returns 502 when peer connection fails early (task 3.2).
+# What: Ensure /webrtc/offer returns SDP answer even when peer does not connect; cleanup is handled asynchronously (task 3.2).
 
 import sys
 import types
@@ -96,14 +96,10 @@ class FakePC:
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     app = StreamingServer(cfg_pkl="/tmp/cfg.pkl", data_root="/tmp/data").app
-    # force wait_for_connection to fail immediately
-    async def _fail_wait(*args, **kwargs):
-        return False
-    monkeypatch.setattr("streaming_server.StreamingServer._wait_for_connection", _fail_wait)
     return TestClient(app)
 
 
-def test_offer_returns_502_when_connection_fails(tmp_path, client):
+def test_offer_returns_answer_when_connection_fails(tmp_path, client):
     audio = tmp_path / "a.wav"
     img = tmp_path / "b.png"
     audio.write_bytes(b"a")
@@ -117,5 +113,5 @@ def test_offer_returns_502_when_connection_fails(tmp_path, client):
     }
 
     resp = client.post("/webrtc/offer", json=payload)
-    assert resp.status_code == 502
-    assert "peer connection failed" in resp.json()["detail"]
+    assert resp.status_code == 200
+    assert resp.json().get("type") == "answer"

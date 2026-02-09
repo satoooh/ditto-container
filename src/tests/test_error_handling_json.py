@@ -1,5 +1,5 @@
 # Where: src/tests/test_error_handling_json.py
-# What: Ensure errors return consistent JSON detail for validation, connection fail, pipeline fail (task 5.2).
+# What: Ensure errors return consistent JSON detail for validation and async pipeline handling (task 5.2).
 
 import sys
 import types
@@ -117,7 +117,7 @@ def test_validation_error_returns_400_json(client, tmp_path):
     assert "detail" in resp.json()
 
 
-def test_connection_fail_returns_502(client, monkeypatch, tmp_path):
+def test_connection_wait_fail_does_not_block_offer_response(client, monkeypatch, tmp_path):
     server, api = client
     async def _wait_fail(*a, **k):
         return False
@@ -129,11 +129,11 @@ def test_connection_fail_returns_502(client, monkeypatch, tmp_path):
     img.write_bytes(b"b")
 
     resp = api.post("/webrtc/offer", json={"sdp": "v=0", "type": "offer", "audio_path": str(audio), "source_path": str(img)})
-    assert resp.status_code == 502
-    assert "detail" in resp.json()
+    assert resp.status_code == 200
+    assert resp.json().get("type") == "answer"
 
 
-def test_pipeline_fail_returns_500(client, monkeypatch, tmp_path):
+def test_pipeline_fail_keeps_offer_response_200(client, monkeypatch, tmp_path):
     server, api = client
     async def _wait_ok(*a, **k):
         return True
@@ -149,8 +149,5 @@ def test_pipeline_fail_returns_500(client, monkeypatch, tmp_path):
     img.write_bytes(b"b")
 
     resp = api.post("/webrtc/offer", json={"sdp": "v=0", "type": "offer", "audio_path": str(audio), "source_path": str(img)})
-    # Pipeline failure may surface immediately (500) or asynchronously (200). Accept both.
-    if resp.status_code == 500:
-        assert resp.json().get("detail") == "Streaming pipeline failed"
-    else:
-        assert resp.status_code == 200
+    # Pipeline is executed asynchronously; /webrtc/offer should still return the SDP answer.
+    assert resp.status_code == 200
