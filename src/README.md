@@ -91,6 +91,7 @@ pytest
 ```
 
 ## 参考ドキュメント
+- `docs/BANDWIDTH_TEST_GUIDE.md` : WebSocket 帯域計測ツール（補助検証用）
 - `_docs/2025-09-04_container_run_keepalive.md` : コンテナ起動時のトラブルシュート
 - `_docs/2025-09-04_binary_ws_prewarm.md` : バイナリ化/プリウォーム実装メモ
 - `_docs/2025-09-04_browser_upload_streaming.md` : ブラウザアップロード導線

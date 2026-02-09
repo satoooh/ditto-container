@@ -1,6 +1,8 @@
 # Bandwidth Test Guide
 
 > Note: このガイドは WebSocket 帯域計測用の補助ツールです。現行の標準配信経路は WebRTC です。
+> 
+> リポジトリルートで実行する前提の手順です。スクリプト本体は `src/bandwidth_test_*.py` にあります。
 
 These scripts measure WebSocket throughput between your server and client to determine optimal streaming parameters.
 
@@ -9,19 +11,19 @@ These scripts measure WebSocket throughput between your server and client to det
 ### **Server Side (GPU server)**
 ```bash
 # Install dependencies
-pip install -r bandwidth_test_requirements.txt
+pip install -r src/bandwidth_test_requirements.txt
 
 # Run bandwidth test server
-python bandwidth_test_server.py --host 0.0.0.0 --port 8001
+python src/bandwidth_test_server.py --host 0.0.0.0 --port 8001
 ```
 
 ### **Client Side (remote machine)**
 ```bash
 # Install dependencies  
-pip install -r bandwidth_test_requirements.txt
+pip install -r src/bandwidth_test_requirements.txt
 
 # Run bandwidth test (replace with your server IP)
-python bandwidth_test_client.py --server ws://10.49.167.242:8001 --client_id my_client
+python src/bandwidth_test_client.py --server ws://<server-ip>:8001 --client_id my_client
 ```
 
 ## 📊 What the Test Measures
@@ -118,7 +120,7 @@ curl http://10.49.167.242:8001/
 sudo ufw allow 8001/tcp
 
 # Or run on different port
-python bandwidth_test_server.py --port 8080
+python src/bandwidth_test_server.py --port 8080
 ```
 
 ### **Results Interpretation:**

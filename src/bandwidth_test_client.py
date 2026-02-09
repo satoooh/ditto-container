@@ -2,7 +2,9 @@
 """
 Bandwidth Test Client
 Connects to bandwidth test server to measure WebSocket throughput.
-Usage: python bandwidth_test_client.py --server ws://10.49.167.242:8001 --client_id test_client
+Usage: python src/bandwidth_test_client.py --server ws://<server-ip>:8001 --client_id test_client
+
+Operational guide: docs/BANDWIDTH_TEST_GUIDE.md
 """
 
 import asyncio

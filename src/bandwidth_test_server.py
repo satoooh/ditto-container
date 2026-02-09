@@ -2,7 +2,9 @@
 """
 Bandwidth Test Server
 Tests WebSocket throughput between server and client to determine optimal streaming parameters.
-Usage: python bandwidth_test_server.py --host 0.0.0.0 --port 8001
+Usage: python src/bandwidth_test_server.py --host 0.0.0.0 --port 8001
+
+Operational guide: docs/BANDWIDTH_TEST_GUIDE.md
 """
 
 import argparse
