@@ -5,6 +5,6 @@
 最新のセットアップ手順・品質チューニング・検証方法はリポジトリ直下の `README.md` に統合されています。以下のリンクを参照してください。
 
 - [リアルタイムストリーミング（WebRTC）](../README.md#4-リアルタイムストリーミングwebrtc)
-- [Remote WebRTC Streaming Client Setup](REMOTE_CLIENT_SETUP.md)
+- [Remote WebRTC Streaming Client Setup](../src/REMOTE_CLIENT_SETUP.md)
 
 このファイルは履歴目的で残しており、新しい情報は上記ドキュメントを参照してください。

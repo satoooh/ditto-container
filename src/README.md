@@ -96,8 +96,8 @@ pytest
 - `_docs/2025-09-04_binary_ws_prewarm.md` : バイナリ化/プリウォーム実装メモ
 - `_docs/2025-09-04_browser_upload_streaming.md` : ブラウザアップロード導線
 - `_docs/2025-09-17_setup_streaming_optim.md` : 最新実装ログ
-- `src/STREAMING_SETUP.md` : ストリーミング構成概略
-- `src/STREAMING_OPTIMIZATIONS.md` : 最適化の詳細と検証手順
+- `docs/STREAMING_SETUP.md` : ストリーミング構成概略
+- `docs/STREAMING_OPTIMIZATIONS.md` : 最適化の詳細と検証手順
 
 ## トラブルシューティング
 - コンテナが即停止する → `setup.sh run` は `sleep infinity` にフォールバックしますが、ログ (`docker logs ditto-container`) を確認してください。

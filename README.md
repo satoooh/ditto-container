@@ -175,8 +175,8 @@ python streaming_client.py \
 | `docs/PROJECT_STATUS.md` | プロジェクト全体の進捗、既知課題、次アクション |
 | `docs/BANDWIDTH_TEST_GUIDE.md` | WebSocket 帯域計測ツールの実行手順（補助検証用） |
 | `docs/WEBRTC_DEMO.md` | WebRTC デモの最短実行手順 |
-| `src/STREAMING_SETUP.md` | ストリーミング構成の概要と構築手順 |
-| `src/STREAMING_OPTIMIZATIONS.md` | 最適化ポイントと検証方法 |
+| `docs/STREAMING_SETUP.md` | ストリーミング構成の概要と構築手順 |
+| `docs/STREAMING_OPTIMIZATIONS.md` | 最適化ポイントと検証方法 |
 | `src/README.md` | コンテナ内 `/app/src` 利用ガイド |
 
 ---
